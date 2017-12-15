@@ -1469,7 +1469,7 @@ const char* tfa98xx_get_i2c_status_id_string(int status)
                         break;
         }
 
-        return p_id_str;
+        return kstrdup(p_id_str, GFP_KERNEL);
 }
 
 enum Tfa98xx_Error tfa_dsp_msg_read(Tfa98xx_handle_t handle,int length, unsigned char *bytes){
@@ -1539,8 +1539,10 @@ enum Tfa98xx_Error tfa_dsp_msg(Tfa98xx_handle_t handle, int length, const char *
 
 	if (rpc_status != Tfa98xx_I2C_Req_Done) {
 		/* DSP RPC call returned an error */
+		const char *status_str = tfa98xx_get_i2c_status_id_string(rpc_status);
 		error = (enum Tfa98xx_Error) (rpc_status + Tfa98xx_Error_RpcBase);
-                pr_err("tfa98xx: %s() DSP msg status: %d (%s)\n", __func__, rpc_status, tfa98xx_get_i2c_status_id_string(rpc_status));
+                pr_err("tfa98xx: %s() DSP msg status: %d (%s)\n", __func__, rpc_status, status_str);
+		kfree(status_str);
 	}
 
 	return error;
@@ -1574,8 +1576,10 @@ enum Tfa98xx_Error tfa_dsp_msg_id(Tfa98xx_handle_t handle, int length, const cha
 
 	if (rpc_status != Tfa98xx_I2C_Req_Done) {
 		/* DSP RPC call returned an error */
+		const char *status_str = tfa98xx_get_i2c_status_id_string(rpc_status);
 		error = (enum Tfa98xx_Error) (rpc_status + Tfa98xx_Error_RpcBase);
-                pr_err("tfa98xx: %s() DSP msg status: %d (%s)\n", __func__, rpc_status, tfa98xx_get_i2c_status_id_string(rpc_status));
+                pr_err("tfa98xx: %s() DSP msg status: %d (%s)\n", __func__, rpc_status, status_str);
+		kfree(status_str);
 	}
 
 	return error;
