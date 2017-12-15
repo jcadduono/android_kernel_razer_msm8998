@@ -34,7 +34,7 @@ while [ $# != 0 ]; do
 done
 
 [ "$DEVICE" ] || DEVICE=cheryl
-[ "$TARGET" ] || TARGET=razer
+[ "$TARGET" ] || TARGET=twrp
 DEFCONFIG=${TARGET}_${DEVICE}_defconfig
 
 cd "$RDIR" || ABORT "Failed to enter $RDIR!"
