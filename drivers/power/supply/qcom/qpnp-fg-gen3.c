@@ -142,6 +142,38 @@
 #define FLOAT_VOLT_v2_WORD		16
 #define FLOAT_VOLT_v2_OFFSET		2
 
+/* WayneWCShiue - 9801-468 - [BAT] Jeita temperature protection */
+#define DEFAULT_CUTOFF_VOLT_MV		3200
+#define DEFAULT_EMPTY_VOLT_MV		2850
+#define DEFAULT_RECHARGE_VOLT_MV	4250
+#define DEFAULT_CHG_TERM_CURR_MA	100
+#define DEFAULT_CHG_TERM_BASE_CURR_MA	75
+#define DEFAULT_SYS_TERM_CURR_MA	-125
+#define DEFAULT_DELTA_SOC_THR		1
+#define DEFAULT_RECHARGE_SOC_THR	95
+#define DEFAULT_BATT_TEMP_COLD		0
+#define DEFAULT_BATT_TEMP_COOL		15
+#define DEFAULT_BATT_TEMP_WARM		45
+#define DEFAULT_BATT_TEMP_HOT		55
+#define DEFAULT_CL_START_SOC		15
+#define DEFAULT_CL_MIN_TEMP_DECIDEGC	150
+#define DEFAULT_CL_MAX_TEMP_DECIDEGC	450
+#define DEFAULT_CL_MAX_INC_DECIPERC	5
+#define DEFAULT_CL_MAX_DEC_DECIPERC	100
+#define DEFAULT_CL_MIN_LIM_DECIPERC	0
+#define DEFAULT_CL_MAX_LIM_DECIPERC	0
+#define BTEMP_DELTA_LOW			2
+#define BTEMP_DELTA_HIGH		10
+#define DEFAULT_ESR_FLT_TEMP_DECIDEGC	100
+#define DEFAULT_ESR_TIGHT_FLT_UPCT	3907
+#define DEFAULT_ESR_BROAD_FLT_UPCT	99610
+#define DEFAULT_ESR_TIGHT_LT_FLT_UPCT	48829
+#define DEFAULT_ESR_BROAD_LT_FLT_UPCT	148438
+#define DEFAULT_ESR_CLAMP_MOHMS		20
+#define DEFAULT_ESR_PULSE_THRESH_MA	110
+#define DEFAULT_ESR_MEAS_CURR_MA	120
+/* end 9801-468 */
+
 static int fg_decode_voltage_15b(struct fg_sram_param *sp,
 	enum fg_sram_param_id id, int val);
 static int fg_decode_value_16b(struct fg_sram_param *sp,
@@ -158,6 +190,9 @@ static void fg_encode_default(struct fg_sram_param *sp,
 	enum fg_sram_param_id id, int val, u8 *buf);
 
 static struct fg_irq_info fg_irqs[FG_IRQ_MAX];
+#ifdef BBS_LOG
+static int fg_get_cycle_count(struct fg_chip *chip);
+#endif
 
 #define PARAM(_id, _addr_word, _addr_byte, _len, _num, _den, _offset,	\
 	      _enc, _dec)						\
@@ -598,6 +633,36 @@ static int fg_get_battery_temp(struct fg_chip *chip, int *val)
 	return 0;
 }
 
+/* WayneWCShiue - 9801-7860 - Add more log for debug */
+static int fg_get_battery_resistance_esr(struct fg_chip *chip, int *val)
+{
+	int rc, esr_uohms;
+
+	rc = fg_get_sram_prop(chip, FG_SRAM_ESR, &esr_uohms);
+	if (rc < 0) {
+		pr_err("failed to get ESR, rc=%d\n", rc);
+		return rc;
+	}
+
+	*val = esr_uohms;
+	return 0;
+}
+
+static int fg_get_battery_resistance_rslow(struct fg_chip *chip, int *val)
+{
+	int rc, rslow_uohms;
+
+	rc = fg_get_sram_prop(chip, FG_SRAM_RSLOW, &rslow_uohms);
+	if (rc < 0) {
+		pr_err("failed to get rslow, rc=%d\n", rc);
+		return rc;
+	}
+
+	*val = rslow_uohms;
+	return 0;
+}
+/* end 9801-7860 */
+
 static int fg_get_battery_resistance(struct fg_chip *chip, int *val)
 {
 	int rc, esr_uohms, rslow_uohms;
@@ -739,6 +804,11 @@ static bool is_batt_empty(struct fg_chip *chip)
 	if (!rc)
 		pr_warn("batt_soc_rt_sts: %x vbatt: %d uV msoc:%d\n", status,
 			vbatt_uv, msoc);
+
+	#ifdef BBS_LOG
+	if(vbatt_uv < chip->dt.cutoff_volt_mv * 1000)
+		QPNPFG_BATTERY_VOLTAGE_LOW;
+	#endif
 
 	return ((vbatt_uv < chip->dt.cutoff_volt_mv * 1000) ? true : false);
 }
@@ -904,7 +974,6 @@ out:
 		return ret;
 	}
 
-	vote(chip->batt_miss_irq_en_votable, BATT_MISS_IRQ_VOTER, true, 0);
 	return rc;
 }
 
@@ -914,6 +983,23 @@ static int fg_get_batt_profile(struct fg_chip *chip)
 	struct device_node *batt_node, *profile_node;
 	const char *data;
 	int rc, len;
+
+/* DY-FixMergeConflict*[ */
+	rc = fg_get_batt_id(chip);
+	if (rc < 0) {
+		pr_err("Error in getting batt_id rc:%d\n", rc);
+		return rc;
+	}
+
+/*
+	chip->batt_id_ohms = batt_id;
+	batt_id /= 1000;
+	chip->batt_id_ohms = batt_id;
+*/
+#ifdef BBS_LOG
+	printk("BBox::UPD;0::%d\n", chip->batt_id_ohms/1000);
+#endif
+/* DY-FixMergeConflict*] */
 
 	batt_node = of_find_node_by_name(node, "qcom,battery-data");
 	if (!batt_node) {
@@ -930,6 +1016,18 @@ static int fg_get_batt_profile(struct fg_chip *chip)
 		pr_err("couldn't find profile handle\n");
 		return -ENODATA;
 	}
+
+	/* WayneWCShiue - 9801-3159 - Avoid Runin fail: Use the battery id in the profile to instead of the one in the SRAM */
+	#if defined(CONFIG_FIH_9801) || defined(CONFIG_FIH_9802)
+	rc = of_property_read_u32(profile_node, "qcom,batt-id-kohm",
+			&chip->batt_id_ohms);
+	if (rc < 0) {
+		pr_err("batt_id unavailable, rc:%d\n", rc);
+		return rc;
+	}
+	chip->batt_id_ohms *=  1000;
+	#endif
+	/* end 9801-3159 */
 
 	rc = of_property_read_string(profile_node, "qcom,battery-type",
 			&chip->bp.batt_type_str);
@@ -969,6 +1067,81 @@ static int fg_get_batt_profile(struct fg_chip *chip)
 		pr_err("battery profile incorrect size: %d\n", len);
 		return -EINVAL;
 	}
+
+	/* WayneWCShiue - 9801-468 - [BAT] Jeita temperature protection */
+	chip->dt.jeita_thresholds[JEITA_COLD] = DEFAULT_BATT_TEMP_COLD;
+	chip->dt.jeita_thresholds[JEITA_COOL] = DEFAULT_BATT_TEMP_COOL;
+	chip->dt.jeita_thresholds[JEITA_WARM] = DEFAULT_BATT_TEMP_WARM;
+	chip->dt.jeita_thresholds[JEITA_HOT] = DEFAULT_BATT_TEMP_HOT;
+	if (of_property_count_elems_of_size(profile_node, "qcom,fg-jeita-thresholds",
+		sizeof(u32)) == NUM_JEITA_LEVELS) {
+		rc = of_property_read_u32_array(profile_node,
+				"qcom,fg-jeita-thresholds",
+				chip->dt.jeita_thresholds, NUM_JEITA_LEVELS);
+		if (rc < 0) {
+			pr_err("Error reading Jeita thresholds, default values will be used rc:%d\n", rc);
+		}
+	} else {
+		pr_err("Error reading Jeita thresholds, the size is not %d, default value will be used\n", NUM_JEITA_LEVELS);
+	}
+
+	/* WayneWCShiue - 9801-3730 - Change JEITA dynamically */
+	chip->bp.diff_jeita_fn_en = of_property_read_bool(profile_node,
+						"fih,diff-jeita-fn");
+
+	if(chip->bp.diff_jeita_fn_en) {
+		rc = of_property_read_u32(profile_node, "qcom,jeita-fcc-comp-cool",
+				&chip->bp.jeita_fcc_comp_cool);
+		if (rc < 0) {
+			pr_err("qcom,jeita-fcc-comp-cool unavailable, rc:%d\n", rc);
+			chip->bp.jeita_fcc_comp_cool = -EINVAL;
+		}
+
+		rc = of_property_read_u32(profile_node, "qcom,jeita-fcc-comp-warm",
+				&chip->bp.jeita_fcc_comp_warm);
+		if (rc < 0) {
+			pr_err("qcom,jeita-fcc-comp-warm unavailable, rc:%d\n", rc);
+			chip->bp.jeita_fcc_comp_warm = -EINVAL;
+		}
+
+		rc = of_property_read_u32(profile_node, "qcom,jeita-fv-comp-cool",
+				&chip->bp.jeita_fv_comp_cool);
+		if (rc < 0) {
+			pr_err("qcom,jeita-fv-comp-cool unavailable, rc:%d\n", rc);
+			chip->bp.jeita_fv_comp_cool = -EINVAL;
+		}
+
+		rc = of_property_read_u32(profile_node, "qcom,jeita-fv-comp-warm",
+				&chip->bp.jeita_fv_comp_warm);
+		if (rc < 0) {
+			pr_err("qcom,jeita-fv-comp-warm unavailable, rc:%d\n", rc);
+			chip->bp.jeita_fv_comp_warm = -EINVAL;
+		}
+
+		rc = of_property_read_u32(profile_node, "qcom,jeita-fcc-cool-max-ua",
+				&chip->bp.jeita_fcc_cool_max_ua);
+		if (rc < 0) {
+			pr_err("qcom,jeita-fcc-cool-max-ua unavailable, rc:%d\n", rc);
+			chip->bp.jeita_fcc_cool_max_ua = -EINVAL;
+		}
+
+		rc = of_property_read_u32(profile_node, "qcom,jeita-fcc-warm-max-ua",
+				&chip->bp.jeita_fcc_warm_max_ua);
+		if (rc < 0) {
+			pr_err("qcom,jeita-fcc-warm-max-ua unavailable, rc:%d\n", rc);
+			chip->bp.jeita_fcc_warm_max_ua = -EINVAL;
+		}
+	}
+	/* end 9801-3730 */
+	/* end 9801-468 */
+
+	/* WayneWCShiue - 9801-8555 - [BAT] Inform Battery Protect AP once the battery can only charge to 4.1V */
+	chip->bp.fih_jeita_full_capacity_warm_en = of_property_read_bool(profile_node,
+						"fih,jeita-full-capacity-warm-en");
+
+	chip->bp.fih_jeita_full_capacity_cool_en = of_property_read_bool(profile_node,
+						"fih,jeita-full-capacity-cool-en");
+	/* end 9801-8555 */
 
 	chip->profile_available = true;
 	memcpy(chip->batt_profile, data, len);
@@ -1092,35 +1265,102 @@ static void fg_notify_charger(struct fg_chip *chip)
 		return;
 	}
 
-	prop.intval = chip->bp.fastchg_curr_ma * 1000;
+	/* WayneWCShiue - 9801-3730 - Change JEITA dynamically */
+	prop.intval = (chip->bp.diff_jeita_fn_en == true) ? 1 : 0;
 	rc = power_supply_set_property(chip->batt_psy,
-			POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX, &prop);
+			POWER_SUPPLY_PROP_JEITA_DIFF_FN_EN, &prop);
 	if (rc < 0) {
-		pr_err("Error in setting constant_charge_current_max property on batt_psy, rc=%d\n",
-			rc);
-		return;
+		pr_err("Error in setting diff_jeita_fn_en property on batt_psy, rc=%d\n", rc);
 	}
+
+	if(chip->bp.diff_jeita_fn_en) {
+		prop.intval = chip->bp.jeita_fcc_cool_max_ua;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_JEITA_FCC_COOL_MAX_UA, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting jeita_fcc_cool_max_ua property on batt_psy, rc=%d\n", rc);
+		}
+
+		prop.intval = chip->bp.jeita_fcc_warm_max_ua;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_JEITA_FCC_WARM_MAX_UA, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting jeita_fcc_warm_max_ua property on batt_psy, rc=%d\n", rc);
+		}
+
+		prop.intval = chip->bp.jeita_fcc_comp_cool;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_JEITA_FCC_COOL, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting jeita_fcc_comp_cool property on batt_psy, rc=%d\n", rc);
+		}
+
+		prop.intval = chip->bp.jeita_fcc_comp_warm;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_JEITA_FCC_WARM, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting jeita_fcc_comp_warm property on batt_psy, rc=%d\n", rc);
+		}
+
+		prop.intval = chip->bp.jeita_fv_comp_cool;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_JEITA_FV_COOL, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting jeita_fv_comp_cool property on batt_psy, rc=%d\n", rc);
+		}
+
+		prop.intval = chip->bp.jeita_fv_comp_warm;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_JEITA_FV_WARM, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting jeita_fv_comp_warm property on batt_psy, rc=%d\n", rc);
+		}
+	}
+	/* end 9801-3730 */
+
+	/* WayneWCShiue - 9801-8555 - [BAT] Inform Battery Protect AP once the battery can only charge to 4.1V */
+	if(chip->bp.fih_jeita_full_capacity_warm_en == true)
+		prop.intval = 1;
+	else
+		prop.intval = 0;
+	rc = power_supply_set_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_JEITA_FULL_CAPACITY_WARM_EN, &prop);
+	if (rc < 0) {
+		pr_err("Error in setting fih_jeita_full_cap_warm_en property on batt_psy, rc=%d\n", rc);
+	}
+
+	if(chip->bp.fih_jeita_full_capacity_cool_en == true)
+		prop.intval = 1;
+	else
+		prop.intval = 0;
+	rc = power_supply_set_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_JEITA_FULL_CAPACITY_COOL_EN, &prop);
+	if (rc < 0) {
+		pr_err("Error in setting fih_jeita_full_cap_cool_en property on batt_psy, rc=%d\n", rc);
+	}
+	/* end 9801-8555 */
+
+	/* WayneWCShiue - 9801-694 - [BAT] If the property < 0, means there is no such property in dtsi, ignore it. */
+	if(chip->bp.fastchg_curr_ma >= 0) {
+		prop.intval = chip->bp.fastchg_curr_ma * 1000;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting constant_charge_current_max property on batt_psy, rc=%d\n",
+				rc);
+			return;
+		}
+
+		prop.intval = chip->bp.fastchg_curr_ma * 1000;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_FCC_MAX_UA, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting fastchg_curr_ma property on batt_psy, rc=%d\n", rc);
+		}
+	}
+	/* end 9801-105 */
 
 	fg_dbg(chip, FG_STATUS, "Notified charger on float voltage and FCC\n");
-}
-
-static int fg_batt_miss_irq_en_cb(struct votable *votable, void *data,
-					int enable, const char *client)
-{
-	struct fg_chip *chip = data;
-
-	if (!chip->irqs[BATT_MISSING_IRQ].irq)
-		return 0;
-
-	if (enable) {
-		enable_irq(chip->irqs[BATT_MISSING_IRQ].irq);
-		enable_irq_wake(chip->irqs[BATT_MISSING_IRQ].irq);
-	} else {
-		disable_irq_wake(chip->irqs[BATT_MISSING_IRQ].irq);
-		disable_irq(chip->irqs[BATT_MISSING_IRQ].irq);
-	}
-
-	return 0;
 }
 
 static int fg_delta_bsoc_irq_en_cb(struct votable *votable, void *data,
@@ -1219,6 +1459,7 @@ static int fg_load_learned_cap_from_sram(struct fg_chip *chip)
 {
 	int rc, act_cap_mah;
 	int64_t delta_cc_uah, pct_nom_cap_uah;
+	int aging_cc;
 
 	rc = fg_get_sram_prop(chip, FG_SRAM_ACT_BATT_CAP, &act_cap_mah);
 	if (rc < 0) {
@@ -1254,6 +1495,22 @@ static int fg_load_learned_cap_from_sram(struct fg_chip *chip)
 
 	fg_dbg(chip, FG_CAP_LEARN, "learned_cc_uah:%lld nom_cap_uah: %lld\n",
 		chip->cl.learned_cc_uah, chip->cl.nom_cap_uah);
+
+#ifdef BBS_LOG
+	printk("BBox::UPD;49::%lld\n", (chip->cl.nom_cap_uah)/1000);
+
+	if(chip->cl.learned_cc_uah < chip->cl.nom_cap_uah)
+	{
+		aging_cc = div64_s64((chip->cl.learned_cc_uah*100),
+					chip->cl.nom_cap_uah);
+		if(aging_cc < 70) {
+			printk("BBox::UEC;49::2\n");
+			printk("BBox::UPD;50::%d::%lld\n", fg_get_cycle_count(chip), (chip->cl.learned_cc_uah)/1000);
+		}
+
+	}
+#endif
+
 	return 0;
 }
 
@@ -1422,7 +1679,6 @@ out:
 static void fg_cap_learning_update(struct fg_chip *chip)
 {
 	int rc, batt_soc, batt_soc_msb;
-	bool input_present = is_input_present(chip);
 
 	mutex_lock(&chip->cl.lock);
 
@@ -1463,29 +1719,11 @@ static void fg_cap_learning_update(struct fg_chip *chip)
 			chip->cl.init_cc_uah = 0;
 		}
 
-		if (chip->charge_status == POWER_SUPPLY_STATUS_DISCHARGING) {
-			if (!input_present) {
-				fg_dbg(chip, FG_CAP_LEARN, "Capacity learning aborted @ battery SOC %d\n",
-					 batt_soc_msb);
-				chip->cl.active = false;
-				chip->cl.init_cc_uah = 0;
-			}
-		}
-
 		if (chip->charge_status == POWER_SUPPLY_STATUS_NOT_CHARGING) {
-			if (is_qnovo_en(chip) && input_present) {
-				/*
-				 * Don't abort the capacity learning when qnovo
-				 * is enabled and input is present where the
-				 * charging status can go to "not charging"
-				 * intermittently.
-				 */
-			} else {
-				fg_dbg(chip, FG_CAP_LEARN, "Capacity learning aborted @ battery SOC %d\n",
-					batt_soc_msb);
-				chip->cl.active = false;
-				chip->cl.init_cc_uah = 0;
-			}
+			fg_dbg(chip, FG_CAP_LEARN, "Capacity learning aborted @ battery SOC %d\n",
+				batt_soc_msb);
+			chip->cl.active = false;
+			chip->cl.init_cc_uah = 0;
 		}
 	}
 
@@ -1868,6 +2106,7 @@ static int fg_adjust_recharge_soc(struct fg_chip *chip)
 
 	recharge_soc = chip->dt.recharge_soc_thr;
 	recharge_soc_status = chip->recharge_soc_adjusted;
+
 	/*
 	 * If the input is present and charging had been terminated, adjust
 	 * the recharge SOC threshold based on the monotonic SOC at which
@@ -2020,7 +2259,7 @@ static int fg_esr_fcc_config(struct fg_chip *chip)
 {
 	union power_supply_propval prop = {0, };
 	int rc;
-	bool parallel_en = false, qnovo_en;
+	bool parallel_en = false, qnovo_en = false;
 
 	if (is_parallel_charger_available(chip)) {
 		rc = power_supply_get_property(chip->parallel_psy,
@@ -2033,7 +2272,10 @@ static int fg_esr_fcc_config(struct fg_chip *chip)
 		parallel_en = prop.intval;
 	}
 
-	qnovo_en = is_qnovo_en(chip);
+	rc = power_supply_get_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_CHARGE_QNOVO_ENABLE, &prop);
+	if (!rc)
+		qnovo_en = prop.intval;
 
 	fg_dbg(chip, FG_POWER_SUPPLY, "chg_sts: %d par_en: %d qnov_en: %d esr_fcc_ctrl_en: %d\n",
 		chip->charge_status, parallel_en, qnovo_en,
@@ -2045,10 +2287,10 @@ static int fg_esr_fcc_config(struct fg_chip *chip)
 			return 0;
 
 		/*
-		 * When parallel charging or Qnovo is enabled, configure ESR
-		 * FCC to 300mA to trigger an ESR pulse. Without this, FG can
-		 * request the main charger to increase FCC when it is supposed
-		 * to decrease it.
+		 * When parallel charging is enabled, configure ESR FCC to
+		 * 300mA to trigger an ESR pulse. Without this, FG can ask
+		 * the main charger to increase FCC when it is supposed to
+		 * decrease it.
 		 */
 		rc = fg_masked_write(chip, BATT_INFO_ESR_FAST_CRG_CFG(chip),
 				ESR_FAST_CRG_IVAL_MASK |
@@ -2067,8 +2309,8 @@ static int fg_esr_fcc_config(struct fg_chip *chip)
 
 		/*
 		 * If we're here, then it means either the device is not in
-		 * charging state or parallel charging / Qnovo is disabled.
-		 * Disable ESR fast charge current control in SW.
+		 * charging state or parallel charging is disabled. Disable
+		 * ESR fast charge current control in SW.
 		 */
 		rc = fg_masked_write(chip, BATT_INFO_ESR_FAST_CRG_CFG(chip),
 				ESR_FAST_CRG_CTL_EN_BIT, 0);
@@ -2157,7 +2399,7 @@ static void status_change_work(struct work_struct *work)
 		goto out;
 	}
 
-	rc = power_supply_get_property(chip->batt_psy, POWER_SUPPLY_PROP_STATUS,
+	rc = power_supply_get_property(chip->batt_psy, POWER_SUPPLY_PROP_STATUS_INTERNAL,
 			&prop);
 	if (rc < 0) {
 		pr_err("Error in getting charging status, rc=%d\n", rc);
@@ -2491,6 +2733,10 @@ static int __fg_restart(struct fg_chip *chip)
 		return rc;
 	}
 
+	#ifdef BBS_LOG
+	printk("BBox::UPD;72::\n");
+	#endif
+
 	chip->last_soc = msoc;
 	chip->fg_restarting = true;
 	reinit_completion(&chip->soc_ready);
@@ -2534,23 +2780,6 @@ static void profile_load_work(struct work_struct *work)
 	int rc;
 
 	vote(chip->awake_votable, PROFILE_LOAD, true, 0);
-
-	rc = fg_get_batt_id(chip);
-	if (rc < 0) {
-		pr_err("Error in getting battery id, rc:%d\n", rc);
-		goto out;
-	}
-
-	rc = fg_get_batt_profile(chip);
-	if (rc < 0) {
-		pr_warn("profile for batt_id=%dKOhms not found..using OTP, rc:%d\n",
-			chip->batt_id_ohms / 1000, rc);
-		goto out;
-	}
-
-	if (!chip->profile_available)
-		goto out;
-
 	if (!is_profile_load_required(chip))
 		goto done;
 
@@ -2615,9 +2844,9 @@ done:
 	batt_psy_initialized(chip);
 	fg_notify_charger(chip);
 	chip->profile_loaded = true;
+	chip->soc_reporting_ready = true;
 	fg_dbg(chip, FG_STATUS, "profile loaded successfully");
 out:
-	chip->soc_reporting_ready = true;
 	vote(chip->awake_votable, PROFILE_LOAD, false, 0);
 }
 
@@ -3060,6 +3289,14 @@ static int fg_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_RESISTANCE:
 		rc = fg_get_battery_resistance(chip, &pval->intval);
 		break;
+	/* WayneWCShiue - 9801-7860 - Add more log for debug */
+	case POWER_SUPPLY_PROP_RESISTANCE_ESR:
+		rc = fg_get_battery_resistance_esr(chip, &pval->intval);
+		break;
+	case POWER_SUPPLY_PROP_RESISTANCE_RSLOW:
+		rc = fg_get_battery_resistance_rslow(chip, &pval->intval);
+		break;
+	/* end 9801-7860 */
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
 		rc = fg_get_sram_prop(chip, FG_SRAM_OCV, &pval->intval);
 		break;
@@ -3199,6 +3436,10 @@ static enum power_supply_property fg_psy_props[] = {
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 	POWER_SUPPLY_PROP_RESISTANCE_ID,
 	POWER_SUPPLY_PROP_RESISTANCE,
+	/* WayneWCShiue - 9801-7860 - Add more log for debug */
+	POWER_SUPPLY_PROP_RESISTANCE_ESR,
+	POWER_SUPPLY_PROP_RESISTANCE_RSLOW,
+	/* end 9801-7860 */
 	POWER_SUPPLY_PROP_BATTERY_TYPE,
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
@@ -3603,6 +3844,20 @@ static irqreturn_t fg_batt_missing_irq_handler(int irq, void *data)
 		return IRQ_HANDLED;
 	}
 
+	rc = fg_get_batt_id(chip);
+	if (rc < 0) {
+		chip->soc_reporting_ready = true;
+		pr_err("Error in getting battery id, rc:%d\n", rc);
+		return IRQ_HANDLED;
+	}
+
+	rc = fg_get_batt_profile(chip);
+	if (rc < 0) {
+		chip->soc_reporting_ready = true;
+		pr_err("Error in getting battery profile, rc:%d\n", rc);
+		return IRQ_HANDLED;
+	}
+
 	clear_battery_profile(chip);
 	schedule_delayed_work(&chip->profile_load_work, 0);
 
@@ -3696,6 +3951,10 @@ static irqreturn_t fg_delta_msoc_irq_handler(int irq, void *data)
 {
 	struct fg_chip *chip = data;
 	int rc;
+	/* WayneWCShiue - 9803-1713 - Add periodical checker mechanism for charging */
+	union power_supply_propval prop = {0, };
+	/* end 9803-1713 */
+
 
 	fg_dbg(chip, FG_IRQ, "irq %d triggered\n", irq);
 	if (chip->cyc_ctr.en)
@@ -3723,6 +3982,11 @@ static irqreturn_t fg_delta_msoc_irq_handler(int irq, void *data)
 	rc = fg_adjust_timebase(chip);
 	if (rc < 0)
 		pr_err("Error in adjusting timebase, rc=%d\n", rc);
+
+	/* WayneWCShiue - 9803-1713 - Add periodical checker mechanism for charging */
+	rc = power_supply_set_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_FIH_PERIOD_CHECKER, &prop);
+	/* end 9803-1713 */
 
 	if (batt_psy_initialized(chip))
 		power_supply_changed(chip->batt_psy);
@@ -3982,35 +4246,6 @@ static int fg_parse_ki_coefficients(struct fg_chip *chip)
 	return 0;
 }
 
-#define DEFAULT_CUTOFF_VOLT_MV		3200
-#define DEFAULT_EMPTY_VOLT_MV		2850
-#define DEFAULT_RECHARGE_VOLT_MV	4250
-#define DEFAULT_CHG_TERM_CURR_MA	100
-#define DEFAULT_CHG_TERM_BASE_CURR_MA	75
-#define DEFAULT_SYS_TERM_CURR_MA	-125
-#define DEFAULT_DELTA_SOC_THR		1
-#define DEFAULT_RECHARGE_SOC_THR	95
-#define DEFAULT_BATT_TEMP_COLD		0
-#define DEFAULT_BATT_TEMP_COOL		5
-#define DEFAULT_BATT_TEMP_WARM		45
-#define DEFAULT_BATT_TEMP_HOT		50
-#define DEFAULT_CL_START_SOC		15
-#define DEFAULT_CL_MIN_TEMP_DECIDEGC	150
-#define DEFAULT_CL_MAX_TEMP_DECIDEGC	450
-#define DEFAULT_CL_MAX_INC_DECIPERC	5
-#define DEFAULT_CL_MAX_DEC_DECIPERC	100
-#define DEFAULT_CL_MIN_LIM_DECIPERC	0
-#define DEFAULT_CL_MAX_LIM_DECIPERC	0
-#define BTEMP_DELTA_LOW			2
-#define BTEMP_DELTA_HIGH		10
-#define DEFAULT_ESR_FLT_TEMP_DECIDEGC	100
-#define DEFAULT_ESR_TIGHT_FLT_UPCT	3907
-#define DEFAULT_ESR_BROAD_FLT_UPCT	99610
-#define DEFAULT_ESR_TIGHT_LT_FLT_UPCT	48829
-#define DEFAULT_ESR_BROAD_LT_FLT_UPCT	148438
-#define DEFAULT_ESR_CLAMP_MOHMS		20
-#define DEFAULT_ESR_PULSE_THRESH_MA	110
-#define DEFAULT_ESR_MEAS_CURR_MA	120
 static int fg_parse_dt(struct fg_chip *chip)
 {
 	struct device_node *child, *revid_node, *node = chip->dev->of_node;
@@ -4176,6 +4411,10 @@ static int fg_parse_dt(struct fg_chip *chip)
 	else
 		chip->dt.rsense_sel = (u8)temp & SOURCE_SELECT_MASK;
 
+	/* WayneWCShiue - 9801-468 - [BAT] Jeita temperature protection.
+	  * Move the setting of temperature to batteryData
+	  */
+	#if 0
 	chip->dt.jeita_thresholds[JEITA_COLD] = DEFAULT_BATT_TEMP_COLD;
 	chip->dt.jeita_thresholds[JEITA_COOL] = DEFAULT_BATT_TEMP_COOL;
 	chip->dt.jeita_thresholds[JEITA_WARM] = DEFAULT_BATT_TEMP_WARM;
@@ -4189,6 +4428,8 @@ static int fg_parse_dt(struct fg_chip *chip)
 			pr_warn("Error reading Jeita thresholds, default values will be used rc:%d\n",
 				rc);
 	}
+	#endif
+	/* [END] */
 
 	if (of_property_count_elems_of_size(node,
 		"qcom,battery-thermal-coefficients",
@@ -4369,9 +4610,6 @@ static void fg_cleanup(struct fg_chip *chip)
 	if (chip->delta_bsoc_irq_en_votable)
 		destroy_votable(chip->delta_bsoc_irq_en_votable);
 
-	if (chip->batt_miss_irq_en_votable)
-		destroy_votable(chip->batt_miss_irq_en_votable);
-
 	if (chip->batt_id_chan)
 		iio_channel_release(chip->batt_id_chan);
 
@@ -4429,7 +4667,6 @@ static int fg_gen3_probe(struct platform_device *pdev)
 					chip);
 	if (IS_ERR(chip->awake_votable)) {
 		rc = PTR_ERR(chip->awake_votable);
-		chip->awake_votable = NULL;
 		goto exit;
 	}
 
@@ -4438,16 +4675,6 @@ static int fg_gen3_probe(struct platform_device *pdev)
 						fg_delta_bsoc_irq_en_cb, chip);
 	if (IS_ERR(chip->delta_bsoc_irq_en_votable)) {
 		rc = PTR_ERR(chip->delta_bsoc_irq_en_votable);
-		chip->delta_bsoc_irq_en_votable = NULL;
-		goto exit;
-	}
-
-	chip->batt_miss_irq_en_votable = create_votable("FG_BATT_MISS_IRQ",
-						VOTE_SET_ANY,
-						fg_batt_miss_irq_en_cb, chip);
-	if (IS_ERR(chip->batt_miss_irq_en_votable)) {
-		rc = PTR_ERR(chip->batt_miss_irq_en_votable);
-		chip->batt_miss_irq_en_votable = NULL;
 		goto exit;
 	}
 
@@ -4471,6 +4698,19 @@ static int fg_gen3_probe(struct platform_device *pdev)
 	INIT_WORK(&chip->cycle_count_work, cycle_count_work);
 	INIT_DELAYED_WORK(&chip->batt_avg_work, batt_avg_work);
 	INIT_DELAYED_WORK(&chip->sram_dump_work, sram_dump_work);
+
+	rc = fg_get_batt_id(chip);
+	if (rc < 0) {
+		pr_err("Error in getting battery id, rc:%d\n", rc);
+		goto exit;
+	}
+
+	rc = fg_get_batt_profile(chip);
+	if (rc < 0) {
+		chip->soc_reporting_ready = true;
+		pr_warn("profile for batt_id=%dKOhms not found..using OTP, rc:%d\n",
+			chip->batt_id_ohms / 1000, rc);
+	}
 
 	rc = fg_memif_init(chip);
 	if (rc < 0) {
@@ -4515,15 +4755,12 @@ static int fg_gen3_probe(struct platform_device *pdev)
 		goto exit;
 	}
 
-	/* Keep SOC_UPDATE_IRQ disabled until we require it */
+	/* Keep SOC_UPDATE irq disabled until we require it */
 	if (fg_irqs[SOC_UPDATE_IRQ].irq)
 		disable_irq_nosync(fg_irqs[SOC_UPDATE_IRQ].irq);
 
-	/* Keep BSOC_DELTA_IRQ disabled until we require it */
+	/* Keep BSOC_DELTA_IRQ irq disabled until we require it */
 	vote(chip->delta_bsoc_irq_en_votable, DELTA_BSOC_IRQ_VOTER, false, 0);
-
-	/* Keep BATT_MISSING_IRQ disabled until we require it */
-	vote(chip->batt_miss_irq_en_votable, BATT_MISS_IRQ_VOTER, false, 0);
 
 	rc = fg_debugfs_create(chip);
 	if (rc < 0) {
@@ -4547,8 +4784,10 @@ static int fg_gen3_probe(struct platform_device *pdev)
 			pr_err("Error in configuring ESR filter rc:%d\n", rc);
 	}
 
+	dev_set_name(chip->dev, "qpnp_fg-gen3");
 	device_init_wakeup(chip->dev, true);
-	schedule_delayed_work(&chip->profile_load_work, 0);
+	if (chip->profile_available)
+		schedule_delayed_work(&chip->profile_load_work, 0);
 
 	pr_debug("FG GEN3 driver probed successfully\n");
 	return 0;

@@ -23,6 +23,8 @@
 #include <linux/input.h>
 #include <linux/time.h>
 
+#define BOOST_PWRCL_ONLY 1
+
 struct cpu_sync {
 	int cpu;
 	unsigned int input_boost_min;
@@ -163,6 +165,8 @@ static void update_policy_online(void)
 	/* Re-evaluate policy to trigger adjust notifier for online CPUs */
 	get_online_cpus();
 	for_each_online_cpu(i) {
+		if (BOOST_PWRCL_ONLY && i > 3)
+			continue;
 		pr_debug("Updating policy for CPU%d\n", i);
 		cpufreq_update_policy(i);
 	}

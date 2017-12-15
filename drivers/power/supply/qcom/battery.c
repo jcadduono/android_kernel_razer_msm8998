@@ -540,10 +540,10 @@ static int usb_icl_vote_callback(struct votable *votable, void *data,
 		return rc;
 	}
 
-	/* rerun AICL if new ICL is above settled ICL */
 	if (icl_ua > pval.intval)
 		rerun_aicl = true;
 
+	/* rerun AICL if new ICL is above settled ICL */
 	if (rerun_aicl) {
 		/* set a lower ICL */
 		pval.intval = max(pval.intval - ICL_STEP_UA, ICL_STEP_UA);

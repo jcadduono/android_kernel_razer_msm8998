@@ -178,6 +178,10 @@ struct subsys_device {
 	struct list_head list;
 };
 
+#define MAX_SSR_REASON_LEN 81U
+extern char fih_failure_reason[MAX_SSR_REASON_LEN];
+bool disable_MDM_RamDump;
+
 static struct subsys_device *to_subsys(struct device *d)
 {
 	return container_of(d, struct subsys_device, dev);
@@ -522,8 +526,13 @@ static void notify_each_subsys_device(struct subsys_device **list,
 			send_sysmon_notif(dev);
 
 		notif_data.crashed = subsys_get_crash_status(dev);
-		notif_data.enable_ramdump = is_ramdump_enabled(dev);
-		notif_data.enable_mini_ramdumps = enable_mini_ramdumps;
+
+    if (((strcmp(dev->desc->name, "modem") == 0) && disable_MDM_RamDump) || (!(strcmp(dev->desc->name, "modem") == 0)))
+			notif_data.enable_ramdump = 0;
+		else
+		  notif_data.enable_ramdump = is_ramdump_enabled(dev);
+
+    notif_data.enable_mini_ramdumps = enable_mini_ramdumps;
 		notif_data.no_auth = dev->desc->no_auth;
 		notif_data.pdev = pdev;
 
@@ -608,7 +617,7 @@ static void subsystem_ramdump(struct subsys_device *dev, void *data)
 {
 	const char *name = dev->desc->name;
 
-	if (dev->desc->ramdump)
+	if (dev->desc->ramdump && ((strcmp(name, "modem") == 0) && !disable_MDM_RamDump))
 		if (dev->desc->ramdump(is_ramdump_enabled(dev), dev->desc) < 0)
 			pr_warn("%s[%s:%d]: Ramdump failed.\n",
 				name, current->comm, current->pid);
@@ -954,6 +963,17 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 	pr_debug("[%s:%d]: Starting restart sequence for %s\n",
 			current->comm, current->pid, desc->name);
 	notify_each_subsys_device(list, count, SUBSYS_BEFORE_SHUTDOWN, NULL);
+
+	if ( (strcmp(desc->name, "modem") == 0) && enable_ramdumps ){
+		if (strstr(fih_failure_reason, "diagoem.c") != NULL || strstr(fih_failure_reason, "fih_qmi_svc.c") != NULL || strstr(fih_failure_reason, "IMS NV FUNCTION SSR triggle") != NULL){
+		disable_MDM_RamDump = true;
+		}
+
+		//pr_debug("[%p]: disable_MDM_RamDump = %s, fih_failure_reason = %s.\n", current, (disable_MDM_RamDump?"TRUE":"FALSE"), fih_failure_reason);
+	}
+	else
+		disable_MDM_RamDump = false;
+
 	for_each_subsys_device(list, count, NULL, subsystem_shutdown);
 	notify_each_subsys_device(list, count, SUBSYS_AFTER_SHUTDOWN, NULL);
 
@@ -975,6 +995,11 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 
 	pr_info("[%s:%d]: Restart sequence for %s completed.\n",
 			current->comm, current->pid, desc->name);
+
+  if ( strcmp(desc->name, "modem") == 0 ){
+		disable_MDM_RamDump = false;
+		//pr_debug("[%p]: disable_MDM_RamDump = %s.\n", current, (disable_MDM_RamDump?"TRUE":"FALSE"));
+	}
 
 	mutex_unlock(&soc_order_reg_lock);
 	mutex_unlock(&track->lock);

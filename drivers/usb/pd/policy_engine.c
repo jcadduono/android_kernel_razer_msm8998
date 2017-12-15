@@ -283,6 +283,10 @@ static void *usbpd_ipc_log;
 
 static bool check_vsafe0v = true;
 module_param(check_vsafe0v, bool, S_IRUSR | S_IWUSR);
+/* FIH - akckwang - 9801-625 - Fix device can't suspend with ftm cable */
+extern char *saved_command_line;
+static bool inFtm = false;
+/* end FIH - 9801-625 */
 
 static int min_sink_current = 900;
 module_param(min_sink_current, int, S_IRUSR | S_IWUSR);
@@ -920,7 +924,6 @@ static void usbpd_set_state(struct usbpd *pd, enum usbpd_state next_state)
 
 			if (pd->psy_type == POWER_SUPPLY_TYPE_USB ||
 				pd->psy_type == POWER_SUPPLY_TYPE_USB_CDP ||
-				pd->psy_type == POWER_SUPPLY_TYPE_USB_FLOAT ||
 				usb_compliance_mode)
 				start_usb_peripheral(pd);
 		}
@@ -935,8 +938,13 @@ static void usbpd_set_state(struct usbpd *pd, enum usbpd_state next_state)
 			break;
 		}
 
-		if (!val.intval || disable_usb_pd)
+		/* FIH - akckwang - 9801-48 - Fix ftm cable can't get adb and fastboot */
+		//if (!val.intval || disable_usb_pd)
+		if (!val.intval || disable_usb_pd ||
+			pd->typec_mode == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY){
+		/* end FIH - 9801-48 */
 			break;
+		}
 
 		pd_reset_protocol(pd);
 
@@ -1702,6 +1710,7 @@ static void usbpd_sm(struct work_struct *w)
 		if (pd->current_pr == PR_SINK) {
 			usbpd_set_state(pd, PE_SNK_STARTUP);
 		} else if (pd->current_pr == PR_SRC) {
+			enable_vbus(pd);
 			if (!pd->vconn_enabled &&
 					pd->typec_mode ==
 					POWER_SUPPLY_TYPEC_SINK_POWERED_CABLE) {
@@ -1711,7 +1720,6 @@ static void usbpd_sm(struct work_struct *w)
 				else
 					pd->vconn_enabled = true;
 			}
-			enable_vbus(pd);
 
 			usbpd_set_state(pd, PE_SRC_STARTUP);
 		}
@@ -2385,6 +2393,11 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 	union power_supply_propval val;
 	enum power_supply_typec_mode typec_mode;
 	int ret;
+	/* FIH - akckwang - 9801-625 - Fix device can't suspend with ftm cable */
+	bool vbus_present_changed = false;
+	/* end FIH - 9801-625 */
+
+	usbpd_dbg(&pd->dev, "%s:start\n", __func__);
 
 	if (ptr != pd->usb_psy || evt != PSY_EVENT_PROP_CHANGED)
 		return 0;
@@ -2418,7 +2431,12 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 		return ret;
 	}
 
+	/* FIH - akckwang - 9801-625 - Fix device can't suspend with ftm cable */
+	vbus_present_changed = pd->vbus_present == val.intval ? false : true;
+	/* end FIH - 9801-625 */
 	pd->vbus_present = val.intval;
+	usbpd_dbg(&pd->dev, "pd->vbus_present: 0x%x, vbus_present_changed:%d\n",
+		pd->vbus_present, vbus_present_changed);
 
 	ret = power_supply_get_property(pd->usb_psy,
 			POWER_SUPPLY_PROP_REAL_TYPE, &val);
@@ -2428,6 +2446,7 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 	}
 
 	pd->psy_type = val.intval;
+	usbpd_dbg(&pd->dev, "pd->psy_type: 0x%x\n", pd->psy_type);
 
 	/*
 	 * For sink hard reset, state machine needs to know when VBUS changes
@@ -2444,8 +2463,25 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 		return 0;
 	}
 
-	if (pd->typec_mode == typec_mode)
-		return 0;
+	/* FIH - akckwang - 9801-625 - Fix device can't suspend with ftm cable */
+	//if (pd->typec_mode == typec_mode)
+	//	return 0;
+	if (pd->typec_mode == typec_mode){
+		usbpd_dbg(&pd->dev, "typec_mode is same:0x%x\n", typec_mode);
+
+		if (!inFtm){
+			return 0;
+		}
+
+		if (pd->typec_mode != POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY){
+			return 0;
+		}
+		else if(!vbus_present_changed){
+			usbpd_dbg(&pd->dev, "RD/RD attached and vbus present no change\n");
+			return 0;
+		}
+	}
+	/* end FIH - 9801-625 */
 
 	pd->typec_mode = typec_mode;
 
@@ -2498,6 +2534,23 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 
 	case POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY:
 		usbpd_info(&pd->dev, "Type-C Debug Accessory connected\n");
+		/* FIH - akckwang - 9801-625 - Fix device can't suspend with ftm cable */
+		if (!inFtm){
+			/* FIH - akckwang - 9801-48 - Fix ftm cable can't get adb and fastboot */
+			pd->current_pr = PR_SINK;
+			pd->in_pr_swap = false;
+			pd->psy_type = POWER_SUPPLY_TYPE_USB;
+			pd->vbus_present = 1;
+			/* end FIH - 9801-48 */
+		}else{
+			if (pd->vbus_present) {
+				pd->current_pr = PR_SINK;
+				pd->psy_type = POWER_SUPPLY_TYPE_USB;
+			} else {
+				pd->typec_mode = POWER_SUPPLY_TYPEC_NONE;
+			}
+		}
+		/* end FIH - 9801-625 */
 		break;
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
 		usbpd_info(&pd->dev, "Type-C Analog Audio Adapter connected\n");
@@ -3416,6 +3469,11 @@ EXPORT_SYMBOL(usbpd_destroy);
 static int __init usbpd_init(void)
 {
 	usbpd_ipc_log = ipc_log_context_create(NUM_LOG_PAGES, "usb_pd", 0);
+	/* FIH - akckwang - 9801-625 - Fix device can't suspend with ftm cable */
+	if(strstr(saved_command_line, "androidboot.mode=2") != NULL){
+		inFtm = true;
+	}
+	/* end FIH - 9801-625 */
 	return class_register(&usbpd_class);
 }
 module_init(usbpd_init);

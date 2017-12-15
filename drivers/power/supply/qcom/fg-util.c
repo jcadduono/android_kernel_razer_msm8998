@@ -106,17 +106,14 @@ static struct fg_dbgfs dbgfs_data = {
 static bool is_usb_present(struct fg_chip *chip)
 {
 	union power_supply_propval pval = {0, };
-	int rc;
 
 	if (!chip->usb_psy)
 		chip->usb_psy = power_supply_get_by_name("usb");
 
-	if (!chip->usb_psy)
-		return false;
-
-	rc = power_supply_get_property(chip->usb_psy,
-			POWER_SUPPLY_PROP_PRESENT, &pval);
-	if (rc < 0)
+	if (chip->usb_psy)
+		power_supply_get_property(chip->usb_psy,
+				POWER_SUPPLY_PROP_PRESENT, &pval);
+	else
 		return false;
 
 	return pval.intval != 0;
@@ -125,17 +122,14 @@ static bool is_usb_present(struct fg_chip *chip)
 static bool is_dc_present(struct fg_chip *chip)
 {
 	union power_supply_propval pval = {0, };
-	int rc;
 
 	if (!chip->dc_psy)
 		chip->dc_psy = power_supply_get_by_name("dc");
 
-	if (!chip->dc_psy)
-		return false;
-
-	rc = power_supply_get_property(chip->dc_psy,
-			POWER_SUPPLY_PROP_PRESENT, &pval);
-	if (rc < 0)
+	if (chip->dc_psy)
+		power_supply_get_property(chip->dc_psy,
+				POWER_SUPPLY_PROP_PRESENT, &pval);
+	else
 		return false;
 
 	return pval.intval != 0;
@@ -144,25 +138,6 @@ static bool is_dc_present(struct fg_chip *chip)
 bool is_input_present(struct fg_chip *chip)
 {
 	return is_usb_present(chip) || is_dc_present(chip);
-}
-
-bool is_qnovo_en(struct fg_chip *chip)
-{
-	union power_supply_propval pval = {0, };
-	int rc;
-
-	if (!chip->batt_psy)
-		chip->batt_psy = power_supply_get_by_name("battery");
-
-	if (!chip->batt_psy)
-		return false;
-
-	rc = power_supply_get_property(chip->batt_psy,
-			POWER_SUPPLY_PROP_CHARGE_QNOVO_ENABLE, &pval);
-	if (rc < 0)
-		return false;
-
-	return pval.intval != 0;
 }
 
 #define EXPONENT_SHIFT		11
@@ -234,14 +209,26 @@ int fg_sram_write(struct fg_chip *chip, u16 address, u8 offset,
 	bool tried_again = false;
 	bool atomic_access = false;
 
-	if (!chip)
+	if (!chip) {
+		#ifdef BBS_LOG
+			QPNPFG_WRITE_ERROR;
+		#endif
 		return -ENXIO;
+	}
 
-	if (chip->battery_missing)
+	if (chip->battery_missing) {
+		#ifdef BBS_LOG
+			QPNPFG_WRITE_ERROR;
+		#endif
 		return -ENODATA;
+	}
 
-	if (!fg_sram_address_valid(address, len))
+	if (!fg_sram_address_valid(address, len)) {
+		#ifdef BBS_LOG
+			QPNPFG_WRITE_ERROR;
+		#endif
 		return -EFAULT;
+	}
 
 	if (!(flags & FG_IMA_NO_WLOCK))
 		vote(chip->awake_votable, SRAM_WRITE, true, 0);
@@ -287,6 +274,11 @@ wait:
 	if (rc < 0)
 		pr_err("Error in writing SRAM address 0x%x[%d], rc=%d\n",
 			address, offset, rc);
+
+	#ifdef BBS_LOG
+	if(rc < 0)
+		QPNPFG_WRITE_ERROR;
+	#endif
 out:
 	if (atomic_access)
 		disable_irq_nosync(chip->irqs[SOC_UPDATE_IRQ].irq);
@@ -302,14 +294,26 @@ int fg_sram_read(struct fg_chip *chip, u16 address, u8 offset,
 {
 	int rc = 0;
 
-	if (!chip)
+	if (!chip) {
+		#ifdef BBS_LOG
+			QPNPFG_WRITE_ERROR;
+		#endif
 		return -ENXIO;
+	}
 
-	if (chip->battery_missing)
+	if (chip->battery_missing) {
+		#ifdef BBS_LOG
+			QPNPFG_WRITE_ERROR;
+		#endif
 		return -ENODATA;
+	}
 
-	if (!fg_sram_address_valid(address, len))
+	if (!fg_sram_address_valid(address, len)) {
+		#ifdef BBS_LOG
+			QPNPFG_WRITE_ERROR;
+		#endif
 		return -EFAULT;
+	}
 
 	if (!(flags & FG_IMA_NO_WLOCK))
 		vote(chip->awake_votable, SRAM_READ, true, 0);
@@ -319,6 +323,11 @@ int fg_sram_read(struct fg_chip *chip, u16 address, u8 offset,
 	if (rc < 0)
 		pr_err("Error in reading SRAM address 0x%x[%d], rc=%d\n",
 			address, offset, rc);
+
+	#ifdef BBS_LOG
+	if(rc < 0)
+		QPNPFG_WRITE_ERROR;
+	#endif
 
 	mutex_unlock(&chip->sram_rw_lock);
 	if (!(flags & FG_IMA_NO_WLOCK))

@@ -371,6 +371,7 @@ struct msm_fb_data_type {
 	u32 switch_new_mode;
 	bool pending_switch;
 	struct mutex switch_lock;
+	struct mutex cabc_ie_sre_lock;
 	struct input_handler *input_handler;
 };
 

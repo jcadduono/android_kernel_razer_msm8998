@@ -400,6 +400,10 @@ static int bluetooth_power_rfkill_probe(struct platform_device *pdev)
 
 	if (!rfkill) {
 		dev_err(&pdev->dev, "rfkill allocate failed\n");
+#ifdef BBOX_ENABLE
+		pr_info("BBox; %s LINE=%d\n", __func__, __LINE__);
+		pr_info("BBox::UEC; 14::2\n");
+#endif
 		return -ENOMEM;
 	}
 
@@ -456,6 +460,10 @@ static int bt_dt_parse_vreg_info(struct device *dev,
 		if (!vreg) {
 			dev_err(dev, "No memory for vreg: %s\n", vreg_name);
 			ret = -ENOMEM;
+#ifdef BBOX_ENABLE
+			pr_info("BBox; %s LINE=%d\n", __func__, __LINE__);
+			pr_info("BBox::UEC; 14::2\n");
+#endif
 			goto err;
 		}
 
@@ -548,15 +556,25 @@ static int bt_power_populate_dt_pinfo(struct platform_device *pdev)
 
 	BT_PWR_DBG("");
 
-	if (!bt_power_pdata)
+	if (!bt_power_pdata) {
+#ifdef BBOX_ENABLE
+		pr_info("BBox; %s LINE=%d\n", __func__, __LINE__);
+		pr_info("BBox::UEC; 14::2\n");
+#endif
 		return -ENOMEM;
+	}
 
 	if (pdev->dev.of_node) {
 		bt_power_pdata->bt_gpio_sys_rst =
 			of_get_named_gpio(pdev->dev.of_node,
 						"qca,bt-reset-gpio", 0);
-		if (bt_power_pdata->bt_gpio_sys_rst < 0)
+		if (bt_power_pdata->bt_gpio_sys_rst < 0) {
 			BT_PWR_ERR("bt-reset-gpio not provided in device tree");
+#ifdef BBOX_ENABLE
+			pr_info("BBox; %s LINE=%d\n", __func__, __LINE__);
+			pr_info("BBox::UEC; 14::2\n");
+#endif
+		}
 
 		rc = bt_dt_parse_vreg_info(&pdev->dev,
 					&bt_power_pdata->bt_vdd_core,
@@ -617,6 +635,10 @@ static int bt_power_probe(struct platform_device *pdev)
 
 	if (!bt_power_pdata) {
 		BT_PWR_ERR("Failed to allocate memory");
+#ifdef BBOX_ENABLE
+		pr_info("BBox; %s LINE=%d\n",__func__,__LINE__);
+		pr_info("BBox::UEC; 14::2\n");
+#endif
 		return -ENOMEM;
 	}
 
@@ -624,6 +646,10 @@ static int bt_power_probe(struct platform_device *pdev)
 		ret = bt_power_populate_dt_pinfo(pdev);
 		if (ret < 0) {
 			BT_PWR_ERR("Failed to populate device tree info");
+#ifdef BBOX_ENABLE
+			pr_info("BBox; %s LINE=%d\n",__func__,__LINE__);
+			pr_info("BBox::UEC; 14::2\n");
+#endif
 			goto free_pdata;
 		}
 		pdev->dev.platform_data = bt_power_pdata;

@@ -1141,7 +1141,7 @@ static void mmc_sd_detect(struct mmc_host *host)
 {
 	int err = 0;
 #ifdef CONFIG_MMC_PARANOID_SD_INIT
-	int retries = 5;
+	int retries = 10;
 #endif
 
 	BUG_ON(!host);
@@ -1167,7 +1167,14 @@ static void mmc_sd_detect(struct mmc_host *host)
 		err = mmc_send_status(host->card, NULL);
 		if (err) {
 			retries--;
-			udelay(5);
+			/*
+			* Add retry time for SD UHS re-detect failed
+			*/
+			if ( retries > 5)
+				udelay(10);
+			else
+				mdelay(100);
+
 			continue;
 		}
 		break;
@@ -1468,6 +1475,7 @@ err:
 
 	pr_err("%s: error %d whilst initialising SD card\n",
 		mmc_hostname(host), err);
+	printk ("BBox::UEC; 43::3\n");
 
 	return err;
 }

@@ -46,7 +46,7 @@ static ssize_t power_supply_show_property(struct device *dev,
 	static char *type_text[] = {
 		"Unknown", "Battery", "UPS", "Mains", "USB", "USB_DCP",
 		"USB_CDP", "USB_ACA", "USB_HVDCP", "USB_HVDCP_3", "USB_PD",
-		"Wireless", "USB_FLOAT", "BMS", "Parallel", "Main", "Wipower",
+		"Wireless", "BMS", "Parallel", "Main", "Wipower",
 		"TYPEC", "TYPEC_UFP", "TYPEC_DFP"
 	};
 	static char *status_text[] = {
@@ -106,6 +106,8 @@ static ssize_t power_supply_show_property(struct device *dev,
 
 	if (off == POWER_SUPPLY_PROP_STATUS)
 		return sprintf(buf, "%s\n", status_text[value.intval]);
+	else if (off == POWER_SUPPLY_PROP_STATUS_INTERNAL)
+		return sprintf(buf, "%s\n", status_text[value.intval]);
 	else if (off == POWER_SUPPLY_PROP_CHARGE_TYPE)
 		return sprintf(buf, "%s\n", charge_type[value.intval]);
 	else if (off == POWER_SUPPLY_PROP_HEALTH)
@@ -163,6 +165,7 @@ static ssize_t power_supply_store_property(struct device *dev,
 static struct device_attribute power_supply_attrs[] = {
 	/* Properties of type `int' */
 	POWER_SUPPLY_ATTR(status),
+	POWER_SUPPLY_ATTR(status_internal),
 	POWER_SUPPLY_ATTR(charge_type),
 	POWER_SUPPLY_ATTR(health),
 	POWER_SUPPLY_ATTR(present),
@@ -195,6 +198,7 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(charge_counter),
 	POWER_SUPPLY_ATTR(constant_charge_current),
 	POWER_SUPPLY_ATTR(constant_charge_current_max),
+	POWER_SUPPLY_ATTR(fcc_max_ua),
 	POWER_SUPPLY_ATTR(constant_charge_voltage),
 	POWER_SUPPLY_ATTR(constant_charge_voltage_max),
 	POWER_SUPPLY_ATTR(charge_control_limit),
@@ -249,6 +253,10 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(temp_warm),
 	POWER_SUPPLY_ATTR(system_temp_level),
 	POWER_SUPPLY_ATTR(resistance),
+	/* WayneWCShiue - 9801-7860 - Add more log for debug */
+	POWER_SUPPLY_ATTR(resistance_esr),
+	POWER_SUPPLY_ATTR(resistance_rslow),
+	/* end 9801-7860 */
 	POWER_SUPPLY_ATTR(resistance_capacitive),
 	POWER_SUPPLY_ATTR(resistance_id),
 	POWER_SUPPLY_ATTR(resistance_now),
@@ -286,6 +294,26 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(parallel_disable),
 	POWER_SUPPLY_ATTR(pe_start),
 	POWER_SUPPLY_ATTR(set_ship_mode),
+	/* WayneWCShiue - 9801-3730 - Change JEITA dynamically */
+	POWER_SUPPLY_ATTR(jeita_diff_fn_en),
+	POWER_SUPPLY_ATTR(jeita_fcc_cool_max_ua),
+	POWER_SUPPLY_ATTR(jeita_fcc_warm_max_ua),
+	POWER_SUPPLY_ATTR(jeita_fcc_cool),
+	POWER_SUPPLY_ATTR(jeita_fcc_warm),
+	POWER_SUPPLY_ATTR(jeita_fv_cool),
+	POWER_SUPPLY_ATTR(jeita_fv_warm),
+	/* end 9801-3730 */
+	/* WayneWCShiue - 9801-8555 - [BAT] Inform Battery Protect AP once the battery can only charge to 4.1V */
+	POWER_SUPPLY_ATTR(jeita_full_capacity_status),
+	POWER_SUPPLY_ATTR(jeita_full_capacity_warm_en),
+	POWER_SUPPLY_ATTR(jeita_full_capacity_cool_en),
+	/* end 9801-8555 */
+	/* WayneWCShiue - 9803-1713 - Add periodical checker mechanism for charging */
+	POWER_SUPPLY_ATTR(fih_period_checker),
+	/* end 9803-1713 */
+	/* WayneWCShiue - 9801-6414 - Add battery event for problem report */
+	POWER_SUPPLY_ATTR(monitor_event),
+	/* end 9801-6414 */
 	POWER_SUPPLY_ATTR(soc_reporting_ready),
 	POWER_SUPPLY_ATTR(debug_battery),
 	POWER_SUPPLY_ATTR(fcc_delta),

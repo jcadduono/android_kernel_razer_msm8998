@@ -40,16 +40,6 @@
 		gpio = <&tlmm 50 0>;
 		vin-supply = <&pm660l_bob>;
 	};
-
-	cam_rear_dvdd_gpio_regulator: cam_rear_dvdd_fixed_regulator {
-		compatible = "regulator-fixed";
-		regulator-name = "cam_rear_dvdd_gpio_regulator";
-		regulator-min-microvolt = <1350000>;
-		regulator-max-microvolt = <1350000>;
-		enable-active-high;
-		gpio = <&pm660l_gpios 4 0>;
-		vin-supply = <&pm660_s5>;
-	};
 };
 
 &tlmm {
@@ -182,10 +172,10 @@
 		compatible = "qcom,eeprom";
 		cam_vio-supply = <&pm660_l11>;
 		cam_vana-supply = <&cam_avdd_gpio_regulator>;
-		cam_vdig-supply = <&cam_rear_dvdd_gpio_regulator>;
+		cam_vdig-supply = <&pm660_s5>;
 		qcom,cam-vreg-name = "cam_vio", "cam_vana", "cam_vdig";
-		qcom,cam-vreg-min-voltage = <1780000 0 0>;
-		qcom,cam-vreg-max-voltage = <1950000 0 0>;
+		qcom,cam-vreg-min-voltage = <1780000 0 1350000>;
+		qcom,cam-vreg-max-voltage = <1950000 0 1350000>;
 		qcom,cam-vreg-op-mode = <105000 0 105000>;
 		qcom,gpio-no-mux = <0>;
 		pinctrl-names = "cam_default", "cam_suspend";
@@ -194,12 +184,15 @@
 		pinctrl-1 = <&cam_sensor_mclk0_suspend
 				&cam_sensor_rear_suspend>;
 		gpios = <&tlmm 32 0>,
-			<&tlmm 46 0>;
+			<&tlmm 46 0>,
+			<&pm660l_gpios 4 0>;
 		qcom,gpio-reset = <1>;
-		qcom,gpio-req-tbl-num = <0 1>;
-		qcom,gpio-req-tbl-flags = <1 0>;
+		qcom,gpio-vdig = <2>;
+		qcom,gpio-req-tbl-num = <0 1 1>;
+		qcom,gpio-req-tbl-flags = <1 0 0>;
 		qcom,gpio-req-tbl-label = "CAMIF_MCLK2",
-					"CAM_RESET0";
+					"CAM_RESET0",
+					"CAM_VDIG";
 		qcom,sensor-position = <0>;
 		qcom,sensor-mode = <0>;
 		qcom,cci-master = <0>;
@@ -216,11 +209,11 @@
 		compatible = "qcom,eeprom";
 		cam_vio-supply = <&pm660_l11>;
 		cam_vana-supply = <&cam_avdd_gpio_regulator>;
-		cam_vdig-supply = <&cam_rear_dvdd_gpio_regulator>;
+		cam_vdig-supply = <&pm660_s5>;
 		qcom,cam-vreg-name = "cam_vio", "cam_vana", "cam_vdig";
-		qcom,cam-vreg-min-voltage = <1780000 0 0>;
-		qcom,cam-vreg-max-voltage = <1950000 0 0>;
-		qcom,cam-vreg-op-mode = <105000 0 0>;
+		qcom,cam-vreg-min-voltage = <1780000 0 1350000>;
+		qcom,cam-vreg-max-voltage = <1950000 0 1350000>;
+		qcom,cam-vreg-op-mode = <105000 0 105000>;
 		qcom,gpio-no-mux = <0>;
 		pinctrl-names = "cam_default", "cam_suspend";
 		pinctrl-0 = <&cam_sensor_mclk2_active
@@ -228,12 +221,15 @@
 		pinctrl-1 = <&cam_sensor_mclk2_suspend
 				 &cam_sensor_rear2_suspend>;
 		gpios = <&tlmm 34 0>,
-			<&tlmm 48 0>;
+			<&tlmm 48 0>,
+			<&pm660l_gpios 4 0>;
 		qcom,gpio-reset = <1>;
-		qcom,gpio-req-tbl-num = <0 1>;
-		qcom,gpio-req-tbl-flags = <1 0>;
+		qcom,gpio-vdig = <2>;
+		qcom,gpio-req-tbl-num = <0 1 1>;
+		qcom,gpio-req-tbl-flags = <1 0 0>;
 		qcom,gpio-req-tbl-label = "CAMIF_MCLK1",
-					  "CAM_RESET1";
+					  "CAM_RESET1",
+					  "CAM_VDIG";
 		qcom,sensor-position = <0>;
 		qcom,sensor-mode = <0>;
 		qcom,cci-master = <1>;
@@ -294,11 +290,11 @@
 		qcom,eeprom-src = <&eeprom0>;
 		cam_vio-supply = <&pm660_l11>;
 		cam_vana-supply = <&cam_avdd_gpio_regulator>;
-		cam_vdig-supply = <&cam_rear_dvdd_gpio_regulator>;
+		cam_vdig-supply = <&pm660_s5>;
 		qcom,cam-vreg-name = "cam_vio", "cam_vana", "cam_vdig";
-		qcom,cam-vreg-min-voltage = <1780000 0 0>;
-		qcom,cam-vreg-max-voltage = <1950000 0 0>;
-		qcom,cam-vreg-op-mode = <105000 0 0>;
+		qcom,cam-vreg-min-voltage = <1780000 0 1350000>;
+		qcom,cam-vreg-max-voltage = <1950000 0 1350000>;
+		qcom,cam-vreg-op-mode = <105000 0 105000>;
 		qcom,gpio-no-mux = <0>;
 		pinctrl-names = "cam_default", "cam_suspend";
 		pinctrl-0 = <&cam_sensor_mclk0_active
@@ -306,12 +302,15 @@
 		pinctrl-1 = <&cam_sensor_mclk0_suspend
 				 &cam_sensor_rear_suspend>;
 		gpios = <&tlmm 32 0>,
-			<&tlmm 46 0>;
+			<&tlmm 46 0>,
+			<&pm660l_gpios 4 0>;
 		qcom,gpio-reset = <1>;
-		qcom,gpio-req-tbl-num = <0 1>;
-		qcom,gpio-req-tbl-flags = <1 0>;
+		qcom,gpio-vdig = <2>;
+		qcom,gpio-req-tbl-num = <0 1 1>;
+		qcom,gpio-req-tbl-flags = <1 0 0>;
 		qcom,gpio-req-tbl-label = "CAMIF_MCLK2",
-					"CAM_RESET0";
+					"CAM_RESET0",
+					"CAM_VDIG";
 		qcom,sensor-position = <0>;
 		qcom,sensor-mode = <0>;
 		qcom,cci-master = <0>;
@@ -334,11 +333,11 @@
 		qcom,eeprom-src = <&eeprom1>;
 		cam_vio-supply = <&pm660_l11>;
 		cam_vana-supply = <&cam_avdd_gpio_regulator>;
-		cam_vdig-supply = <&cam_rear_dvdd_gpio_regulator>;
+		cam_vdig-supply = <&pm660_s5>;
 		qcom,cam-vreg-name = "cam_vio", "cam_vana", "cam_vdig";
-		qcom,cam-vreg-min-voltage = <1780000 0 0>;
-		qcom,cam-vreg-max-voltage = <1950000 0 0>;
-		qcom,cam-vreg-op-mode = <105000 0 0>;
+		qcom,cam-vreg-min-voltage = <1780000 0 1350000>;
+		qcom,cam-vreg-max-voltage = <1950000 0 1350000>;
+		qcom,cam-vreg-op-mode = <105000 0 105000>;
 		qcom,gpio-no-mux = <0>;
 		pinctrl-names = "cam_default", "cam_suspend";
 		pinctrl-0 = <&cam_sensor_mclk2_active
@@ -346,12 +345,15 @@
 		pinctrl-1 = <&cam_sensor_mclk2_suspend
 				 &cam_sensor_rear2_suspend>;
 		gpios = <&tlmm 34 0>,
-			<&tlmm 48 0>;
+			<&tlmm 48 0>,
+			<&pm660l_gpios 4 0>;
 		qcom,gpio-reset = <1>;
-		qcom,gpio-req-tbl-num = <0 1>;
-		qcom,gpio-req-tbl-flags = <1 0>;
+		qcom,gpio-vdig = <2>;
+		qcom,gpio-req-tbl-num = <0 1 1>;
+		qcom,gpio-req-tbl-flags = <1 0 0>;
 		qcom,gpio-req-tbl-label = "CAMIF_MCLK1",
-					  "CAM_RESET1";
+					  "CAM_RESET1",
+					  "CAM_VDIG";
 		qcom,sensor-position = <0>;
 		qcom,sensor-mode = <0>;
 		qcom,cci-master = <1>;

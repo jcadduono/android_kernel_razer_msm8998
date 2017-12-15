@@ -250,6 +250,24 @@ struct dwc3_msm {
 static void dwc3_pwr_event_handler(struct dwc3_msm *mdwc);
 static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned mA);
 
+/* FIH - akckwang - 9801-680 - Dump typec sts register value */
+#if defined(CONFIG_FIH_9801) || defined(CONFIG_FIH_9802)
+int dumpTypeCSts(struct dwc3 *dwc)
+{
+	union power_supply_propval pval = {0};
+	struct power_supply	*usb_psy;
+	dev_err(dwc->dev, "%s:\n", __func__);
+	usb_psy = power_supply_get_by_name("usb");
+	if(!usb_psy){
+		dev_err(dwc->dev, "%s:can't find usb_psy\n", __func__);
+		return -ENODEV;
+	}
+	power_supply_get_property(usb_psy, POWER_SUPPLY_PROP_TYPEC_MODE, &pval);
+
+	return 0;
+}
+#endif
+/* end FIH - 9801-680 */
 /**
  *
  * Read register with debug info.

@@ -18,7 +18,11 @@
 
 #define MAX_OIS_MOD_NAME_SIZE 32
 #define MAX_OIS_NAME_SIZE 32
+#ifdef CONFIG_FIH_9801
+#define MAX_OIS_REG_SETTINGS 8000 //800 //JYLee modified for OIS init command 20170208
+#else
 #define MAX_OIS_REG_SETTINGS 800
+#endif
 
 #define MOVE_NEAR 0
 #define MOVE_FAR  1

@@ -3369,7 +3369,7 @@ static int _qcrypto_aead_decrypt_aes_cbc(struct aead_request *req)
 
 #ifdef QCRYPTO_DEBUG
 	dev_info(&ctx->pengine->pdev->dev,
-			 "_qcrypto_aead_decrypt_aes_cbc: %pK\n", req);
+			 "_qcrypto_aead_decrypt_aes_cbc: %p\n", req);
 #endif
 	rctx = aead_request_ctx(req);
 	rctx->aead = 1;

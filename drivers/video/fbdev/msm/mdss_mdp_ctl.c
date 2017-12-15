@@ -696,7 +696,6 @@ static u32 get_pipe_mdp_clk_rate(struct mdss_mdp_pipe *pipe,
 	if (flags & PERF_CALC_PIPE_APPLY_CLK_FUDGE)
 		rate = mdss_mdp_clk_fudge_factor(mixer, rate);
 
-	rate = min(mdata->max_mdp_clk_rate, rate);
 	return rate;
 }
 
@@ -3275,6 +3274,7 @@ static void __dsc_setup_dual_lm_single_display(struct mdss_mdp_ctl *ctl,
 		writel_relaxed(0x0, mdata->mdp_base + MDSS_MDP_REG_DCE_SEL);
 	}
 
+	mdss_panel_dsc_parameters_calc(dsc);
 	mdss_panel_dsc_update_pic_dim(dsc, pic_width, pic_height);
 
 	intf_ip_w = this_frame_slices * dsc->slice_width;
@@ -4354,6 +4354,12 @@ static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl, bool handoff)
 	 * (2) continuous splash finished.
 	 */
 	if (handoff || !ctl->panel_data->panel_info.cont_splash_enabled) {
+		if (ctl->pending_mode_switch == MIPI_VIDEO_PANEL) {
+			struct mdss_panel_info *pinfo = &ctl->panel_data->panel_info;
+			if (is_dsc_compression(pinfo)){
+				mdss_mdp_ctl_dsc_setup(ctl, pinfo);
+			}
+		}
 		if (ctl->ops.start_fnc)
 			ret = ctl->ops.start_fnc(ctl);
 		else
@@ -4392,7 +4398,8 @@ static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl, bool handoff)
 		outsize = (mixer->height << 16) | mixer->width;
 		mdp_mixer_write(mixer, MDSS_MDP_REG_LM_OUT_SIZE, outsize);
 
-		if (is_dsc_compression(pinfo)) {
+		if (is_dsc_compression(pinfo) &&
+				ctl->pending_mode_switch != MIPI_VIDEO_PANEL) {
 			mdss_mdp_ctl_dsc_setup(ctl, pinfo);
 		} else if (pinfo->compression_mode == COMPRESSION_FBC) {
 			ret = mdss_mdp_ctl_fbc_enable(1, ctl->mixer_left,
@@ -4460,6 +4467,14 @@ int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff)
 		} else if (is_panel_split_link(ctl->mfd)) {
 			mdss_mdp_ctl_pp_split_display_enable(true, ctl);
 		}
+	}
+
+	/* Need to add the vsync handler now that we are up and running */
+	if (ctl->need_vsync_on && ctl->ops.add_vsync_handler) {
+		pr_debug("%s: add vsync handlers now\n", __func__);
+		ctl->ops.add_vsync_handler(ctl,
+				&ctl->vsync_handler);
+		ctl->need_vsync_on = false;
 	}
 
 	mdss_mdp_hist_intr_setup(&mdata->hist_intr, MDSS_IRQ_RESUME);
@@ -5607,6 +5622,12 @@ int mdss_mdp_ctl_update_fps(struct mdss_mdp_ctl *ctl)
 		return 0;
 	}
 
+	if (ctl->mfd->switch_new_mode == MIPI_CMD_PANEL &&
+			ctl->mfd->panel.type == MIPI_VIDEO_PANEL) {
+		// Wait till we switch to command mode before we update the FPS
+		return 0;
+	}
+
 	mdp5_data = mfd_to_mdp5_data(ctl->mfd);
 	if (!mdp5_data)
 		return -ENODEV;
@@ -5644,9 +5665,9 @@ int mdss_mdp_ctl_update_fps(struct mdss_mdp_ctl *ctl)
 
 	ret = ctl->ops.config_fps_fnc(ctl, new_fps);
 	if (!ret)
-		pr_debug("fps set to %d\n", new_fps);
+		pr_info("%s: fps set to %d\n", __func__, new_fps);
 	else
-		pr_err("Failed to configure %d fps rc=%d\n",
+		pr_err("%s: Failed to configure %d fps rc=%d\n", __func__,
 			new_fps, ret);
 
 exit:
@@ -5813,15 +5834,21 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 	sctl = mdss_mdp_get_split_ctl(ctl);
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
 
-	if (ctl->ops.avr_ctrl_fnc) {
+	if (test_bit(MDSS_CAPS_AVR_SUPPORTED,
+				mdata->mdss_caps_map) &&
+			ctl->avr_info.avr_enabled &&
+			ctl->ops.avr_ctrl_fnc) {
+		ATRACE_BEGIN("commit avr setup");
 		/* avr_ctrl_fnc will configure both master & slave */
 		ret = ctl->ops.avr_ctrl_fnc(ctl, true);
 		if (ret) {
 			pr_err("error configuring avr ctrl registers ctl=%d err=%d\n",
 				ctl->num, ret);
 			mutex_unlock(&ctl->lock);
+			ATRACE_END("commit avr setup");
 			return ret;
 		}
+		ATRACE_END("commit avr setup");
 	}
 
 	mutex_lock(&ctl->flush_lock);

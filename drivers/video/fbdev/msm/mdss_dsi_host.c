@@ -1000,7 +1000,7 @@ void mdss_dsi_controller_cfg(int enable,
 {
 
 	u32 dsi_ctrl;
-	u32 status;
+	u32 status = 0;
 	u32 sleep_us = 1000;
 	u32 timeout_us = 16000;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
@@ -1018,7 +1018,7 @@ void mdss_dsi_controller_cfg(int enable,
 			   status,
 			   ((status & 0x02) == 0),
 			       sleep_us, timeout_us))
-		pr_info("%s: DSI status=%x failed\n", __func__, status);
+		pr_info("%s: CMD_MODE_DMA_BUSY DSI status=%x failed\n", __func__, status);
 
 	/* Check for x_HS_FIFO_EMPTY */
 	if (readl_poll_timeout(((ctrl_pdata->ctrl_base) + 0x000c),
@@ -1027,12 +1027,15 @@ void mdss_dsi_controller_cfg(int enable,
 			       sleep_us, timeout_us))
 		pr_info("%s: FIFO status=%x failed\n", __func__, status);
 
-	/* Check for VIDEO_MODE_ENGINE_BUSY */
+	/* Check for VIDEO_MODE_ENGINE_BUSY -- Timeout happens a lot here.
+	   Based on my analysis, resetting the DSI has no impact on mode
+	   mode switch.  So reduce the timeout significantly to improve
+	   the mode switching time. */
 	if (readl_poll_timeout(((ctrl_pdata->ctrl_base) + 0x0008),
 			   status,
 			   ((status & 0x08) == 0),
-			       sleep_us, timeout_us)) {
-		pr_debug("%s: DSI status=%x\n", __func__, status);
+			       sleep_us, /* timeout_us */ 8000)) {
+		pr_info("%s: VIDEO_MODE_ENGINE_BUSY DSI status=%x\n", __func__, status);
 		pr_debug("%s: Doing sw reset\n", __func__);
 		mdss_dsi_sw_reset(ctrl_pdata, false);
 	}
@@ -2564,6 +2567,8 @@ void mdss_dsi_cmd_mdp_busy(struct mdss_dsi_ctrl_pdata *ctrl)
 
 	if (need_wait) {
 		/* wait until DMA finishes the current job */
+		ATRACE_BEGIN("mdp_busy");
+
 		pr_debug("%s: pending pid=%d\n",
 				__func__, current->pid);
 		rc = wait_for_completion_timeout(&ctrl->mdp_comp,
@@ -2574,6 +2579,8 @@ void mdss_dsi_cmd_mdp_busy(struct mdss_dsi_ctrl_pdata *ctrl)
 		spin_unlock_irqrestore(&ctrl->mdp_lock, flags);
 		if (!rc && mdss_dsi_mdp_busy_tout_check(ctrl))
 			pr_err("%s: timeout error\n", __func__);
+
+		ATRACE_BEGIN("mdp_busy");
 	}
 	pr_debug("%s: done pid=%d\n", __func__, current->pid);
 	MDSS_XLOG(ctrl->ndx, ctrl->mdp_busy, current->pid, XLOG_FUNC_EXIT);

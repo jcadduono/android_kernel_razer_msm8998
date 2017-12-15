@@ -1756,6 +1756,9 @@ static int mdss_rotator_config_hw(struct mdss_rot_hw_resource *hw,
 	}
 
 	ret = mdss_mdp_pipe_queue_data(pipe, &entry->src_buf);
+	if (ret) {
+		pr_err("%s: failed to pipe queue'd data\n", __func__);
+	}
 	pr_debug("Config pipe. src{%u,%u,%u,%u}f=%u\n"
 		"dst{%u,%u,%u,%u}f=%u session_id=%u\n",
 		item->src_rect.x, item->src_rect.y,

@@ -51,11 +51,8 @@
 #define PROFILE_LOAD		"fg_profile_load"
 #define DELTA_SOC		"fg_delta_soc"
 
-/* Delta BSOC irq votable reasons */
+/* Delta BSOC votable reasons */
 #define DELTA_BSOC_IRQ_VOTER	"fg_delta_bsoc_irq"
-
-/* Battery missing irq votable reasons */
-#define BATT_MISS_IRQ_VOTER	"fg_batt_miss_irq"
 
 #define DEBUG_PRINT_BUFFER_SIZE		64
 /* 3 byte address + 1 space character */
@@ -80,6 +77,15 @@
 #define SLOPE_LIMIT_COEFF_MAX		31
 
 #define BATT_THERM_NUM_COEFFS		3
+/* WayneWCShiue - 9801-105 - [BBS] Porting BBS log for battery and charging */
+#define BBS_LOG 1
+#ifdef BBS_LOG
+#define QPNPCHG_BATTERY_MISSING_ERROR do {printk("BBox;%s: Battery missing\n", __func__); printk("BBox::UEC;11::2\n");} while (0)
+#define QPNPFG_READ_ERROR	do {printk("BBox;%s: fg read failed\n", __func__); printk("BBox::UEC;12::2\n");} while (0)
+#define QPNPFG_WRITE_ERROR	do {printk("BBox;%s: fg write failed\n", __func__); printk("BBox::UEC;12::3\n");} while (0)
+#define QPNPFG_BATTERY_VOLTAGE_LOW do {printk("BBox;%s: Voltage low\n", __func__); printk("BBox::UEC;49::3\n");} while (0)
+#endif
+/* end 9801-105 */
 
 /* Debug flag definitions */
 enum fg_debug_flag {
@@ -280,6 +286,19 @@ struct fg_batt_props {
 	int		float_volt_uv;
 	int		vbatt_full_mv;
 	int		fastchg_curr_ma;
+	/* WayneWCShiue - 9801-3730 - Change JEITA dynamically */
+	bool	diff_jeita_fn_en;
+	int		jeita_fcc_comp_cool;
+	int		jeita_fcc_comp_warm;
+	int		jeita_fv_comp_cool;
+	int		jeita_fv_comp_warm;
+	/* end 9801-3730 */
+	int		jeita_fcc_cool_max_ua;
+	int		jeita_fcc_warm_max_ua;
+	/* WayneWCShiue - 9801-8555 - [BAT] Inform Battery Protect AP once the battery can only charge to 4.1V */
+	bool		 fih_jeita_full_capacity_warm_en;
+	bool		 fih_jeita_full_capacity_cool_en;
+	/* end 9801-8555 */
 };
 
 struct fg_cyc_ctr_data {
@@ -364,7 +383,6 @@ struct fg_chip {
 	struct fg_irq_info	*irqs;
 	struct votable		*awake_votable;
 	struct votable		*delta_bsoc_irq_en_votable;
-	struct votable		*batt_miss_irq_en_votable;
 	struct fg_sram_param	*sp;
 	struct fg_alg_flag	*alg_flags;
 	int			*debug_mask;
@@ -471,7 +489,6 @@ extern void dump_sram(u8 *buf, int addr, int len);
 extern int64_t twos_compliment_extend(int64_t val, int s_bit_pos);
 extern s64 fg_float_decode(u16 val);
 extern bool is_input_present(struct fg_chip *chip);
-extern bool is_qnovo_en(struct fg_chip *chip);
 extern void fg_circ_buf_add(struct fg_circ_buf *, int);
 extern void fg_circ_buf_clr(struct fg_circ_buf *);
 extern int fg_circ_buf_avg(struct fg_circ_buf *, int *);

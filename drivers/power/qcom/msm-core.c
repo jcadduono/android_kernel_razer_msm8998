@@ -1,4 +1,6 @@
 /* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017, Paranoid Android.
+ * Copyright (c) 2017, Razer Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,7 +19,6 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/io.h>
-#include <linux/kthread.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
@@ -51,6 +52,8 @@
 #define MAX_NUM_OF_CLUSTERS 2
 #define NUM_OF_CORNERS 10
 #define DEFAULT_SCALING_FACTOR 1
+
+#define SAMPLE_MAX_TIMEOUT_MS 1000
 
 #define ALLOCATE_2D_ARRAY(type)\
 static type **allocate_2d_array_##type(int idx)\
@@ -98,11 +101,10 @@ struct cpu_static_info {
 };
 
 static DEFINE_MUTEX(policy_update_mutex);
-static DEFINE_MUTEX(kthread_update_mutex);
+static DEFINE_MUTEX(suspend_update_mutex);
 static DEFINE_SPINLOCK(update_lock);
 static struct delayed_work sampling_work;
-static struct completion sampling_completion;
-static struct task_struct *sampling_task;
+static struct workqueue_struct *msm_core_wq;
 static int low_hyst_temp;
 static int high_hyst_temp;
 static struct platform_device *msm_core_pdev;
@@ -124,6 +126,10 @@ static bool activate_power_table;
 static int max_throttling_temp = 80; /* in C */
 module_param_named(throttling_temp, max_throttling_temp, int,
 		S_IRUGO | S_IWUSR | S_IWGRP);
+
+// alex.naidis@paranoidandroid.co Rework resampling processing - start
+static unsigned long forced_timeout;
+// alex.naidis@paranoidandroid.co Rework resampling processing - end
 
 /*
  * Cannot be called from an interrupt context
@@ -178,10 +184,27 @@ static void set_threshold(struct cpu_activity_info *cpu_node)
 		&cpu_node->low_threshold);
 }
 
-static void samplequeue_handle(struct work_struct *work)
+// alex.naidis@paranoidandroid.co Rework resampling processing - start
+
+static inline bool should_run_resampling(void)
 {
-	complete(&sampling_completion);
+	if (!mutex_is_locked(&suspend_update_mutex) && !in_suspend)
+		return true;
+	else
+		return false;
 }
+
+static inline void schedule_sampling(void)
+{
+	if (should_run_resampling()) {
+		forced_timeout = jiffies + msecs_to_jiffies(SAMPLE_MAX_TIMEOUT_MS);
+		if (delayed_work_pending(&sampling_work))
+			cancel_delayed_work(&sampling_work);
+		queue_delayed_work(msm_core_wq, &sampling_work,
+					msecs_to_jiffies(0));
+	}
+}
+// alex.naidis@paranoidandroid.co Rework resampling processing - end
 
 /* May be called from an interrupt context */
 static void core_temp_notify(enum thermal_trip_type type,
@@ -195,7 +218,12 @@ static void core_temp_notify(enum thermal_trip_type type,
 
 	cpu_node->temp = temp / scaling_factor;
 
-	complete(&sampling_completion);
+	// alex.naidis@paranoidandroid.co Rework resampling processing - start
+	/* Schedule resampling if the forced timeout is over */
+	if (time_after(jiffies, forced_timeout)) {
+		schedule_sampling();
+	}
+	// alex.naidis@paranoidandroid.co Rework resampling processing - end
 }
 
 static void repopulate_stats(int cpu)
@@ -225,7 +253,7 @@ static void repopulate_stats(int cpu)
 
 void trigger_cpu_pwr_stats_calc(void)
 {
-	int cpu;
+	int cpu, rc = 0;
 	static long prev_temp[NR_CPUS];
 	struct cpu_activity_info *cpu_node;
 	int temp;
@@ -240,10 +268,16 @@ void trigger_cpu_pwr_stats_calc(void)
 		if (cpu_node->sensor_id < 0)
 			continue;
 
+		// alex.naidis@paranoidandroid.co Fix error handling of sensor data retrieval - start
 		if (cpu_node->temp == prev_temp[cpu]) {
-			sensor_get_temp(cpu_node->sensor_id, &temp);
+			rc = sensor_get_temp(cpu_node->sensor_id, &temp);
+			if (rc) {
+				pr_err("msm-core: The sensor reported invalid data!");
+				temp = DEFAULT_TEMP;
+			}
 			cpu_node->temp = temp / scaling_factor;
 		}
+		// alex.naidis@paranoidandroid.co Fix error handling of sensor data retrieval - end
 
 		prev_temp[cpu] = cpu_node->temp;
 
@@ -301,44 +335,44 @@ static void update_related_freq_table(struct cpufreq_policy *policy)
 	}
 }
 
-static __ref int do_sampling(void *data)
+// alex.naidis@paranoidandroid.co Rework resampling processing - start
+static inline void do_sampling(void)
 {
 	int cpu;
 	struct cpu_activity_info *cpu_node;
 	static int prev_temp[NR_CPUS];
 
-	while (!kthread_should_stop()) {
-		wait_for_completion(&sampling_completion);
-		cancel_delayed_work(&sampling_work);
+	if (!should_run_resampling())
+		return;
 
-		mutex_lock(&kthread_update_mutex);
-		if (in_suspend)
-			goto unlock;
+	mutex_lock(&suspend_update_mutex);
+	trigger_cpu_pwr_stats_calc();
 
-		trigger_cpu_pwr_stats_calc();
-
-		for_each_online_cpu(cpu) {
-			cpu_node = &activity[cpu];
-			if (prev_temp[cpu] != cpu_node->temp) {
-				prev_temp[cpu] = cpu_node->temp;
-				set_threshold(cpu_node);
-				trace_temp_threshold(cpu, cpu_node->temp,
-					cpu_node->hi_threshold.temp /
-					scaling_factor,
-					cpu_node->low_threshold.temp /
-					scaling_factor);
-			}
+	for_each_online_cpu(cpu) {
+		cpu_node = &activity[cpu];
+		if (prev_temp[cpu] != cpu_node->temp) {
+			prev_temp[cpu] = cpu_node->temp;
+			set_threshold(cpu_node);
+			trace_temp_threshold(cpu, cpu_node->temp,
+				cpu_node->hi_threshold.temp /
+				scaling_factor,
+				cpu_node->low_threshold.temp /
+				scaling_factor);
 		}
-		if (!poll_ms)
-			goto unlock;
-
-		schedule_delayed_work(&sampling_work,
-			msecs_to_jiffies(poll_ms));
-unlock:
-		mutex_unlock(&kthread_update_mutex);
 	}
-	return 0;
+		mutex_unlock(&suspend_update_mutex);
 }
+
+static void samplequeue_handle(struct work_struct *work)
+{
+	/* Prevent race with core_temp notification by using SAMPLE_MAX_TIMEOUT_MS */
+	forced_timeout = jiffies + msecs_to_jiffies(SAMPLE_MAX_TIMEOUT_MS);
+	do_sampling();
+	forced_timeout = jiffies + msecs_to_jiffies(poll_ms / 2);
+	queue_delayed_work(msm_core_wq, &sampling_work,
+				msecs_to_jiffies(poll_ms));
+}
+// alex.naidis@paranoidandroid.co Rework resampling processing - end
 
 static void clear_static_power(struct cpu_static_info *sp)
 {
@@ -591,13 +625,12 @@ static int msm_core_stats_init(struct device *dev, int cpu)
 
 static int msm_core_task_init(struct device *dev)
 {
-	init_completion(&sampling_completion);
-	sampling_task = kthread_run(do_sampling, NULL, "msm-core:sampling");
-	if (IS_ERR(sampling_task)) {
-		pr_err("Failed to create do_sampling err: %ld\n",
-				PTR_ERR(sampling_task));
-		return PTR_ERR(sampling_task);
-	}
+	// alex.naidis@paranoidandroid.co Rework resampling processing - start
+	msm_core_wq = alloc_workqueue("msm-core_wq", WQ_HIGHPRI, 0);
+	if (!msm_core_wq)
+		return -EFAULT;
+	// alex.naidis@paranoidandroid.co Rework resampling processing - end
+
 	return 0;
 }
 
@@ -820,22 +853,22 @@ static int system_suspend_handler(struct notifier_block *nb,
 {
 	int cpu;
 
-	mutex_lock(&kthread_update_mutex);
+	mutex_lock(&suspend_update_mutex);
 	switch (val) {
 	case PM_POST_HIBERNATION:
 	case PM_POST_SUSPEND:
 	case PM_POST_RESTORE:
 		/*
-		 * Set completion event to read temperature and repopulate
+		 * Schedule resampling to read temperature and repopulate
 		 * stats
 		 */
 		in_suspend = 0;
-		complete(&sampling_completion);
+		schedule_sampling();
 		break;
 	case PM_HIBERNATION_PREPARE:
 	case PM_SUSPEND_PREPARE:
 		/*
-		 * cancel delayed work to be able to restart immediately
+		 * cancel work to be able to restart immediately
 		 * after system resume
 		 */
 		in_suspend = 1;
@@ -858,7 +891,7 @@ static int system_suspend_handler(struct notifier_block *nb,
 	default:
 		break;
 	}
-	mutex_unlock(&kthread_update_mutex);
+	mutex_unlock(&suspend_update_mutex);
 
 	return NOTIFY_OK;
 }
@@ -1069,6 +1102,7 @@ static int msm_core_dev_probe(struct platform_device *pdev)
 	if (ret)
 		goto failed;
 
+	INIT_DELAYED_WORK(&sampling_work, samplequeue_handle);
 	ret = msm_core_task_init(&pdev->dev);
 	if (ret)
 		goto failed;
@@ -1076,8 +1110,8 @@ static int msm_core_dev_probe(struct platform_device *pdev)
 	for_each_possible_cpu(cpu)
 		set_threshold(&activity[cpu]);
 
-	INIT_DEFERRABLE_WORK(&sampling_work, samplequeue_handle);
-	schedule_delayed_work(&sampling_work, msecs_to_jiffies(0));
+	schedule_sampling();
+
 	cpufreq_register_notifier(&cpu_policy, CPUFREQ_POLICY_NOTIFIER);
 	pm_notifier(system_suspend_handler, 0);
 	return 0;

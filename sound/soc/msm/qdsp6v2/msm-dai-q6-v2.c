@@ -3469,6 +3469,11 @@ static int msm_dai_q6_dai_mi2s_probe(struct snd_soc_dai *dai)
 
 	dai->id = mi2s_pdata->intf_id;
 
+#if defined (CONFIG_FIH_RCL)
+	if(dai->id ==  MSM_DUMMY_MI2S)
+		return rc;
+#endif
+
 	if (mi2s_dai_data->rx_dai.mi2s_dai_data.port_config.i2s.channel_mode) {
 		if (dai->id == MSM_PRIM_MI2S)
 			ctrl = &mi2s_config_controls[0];
@@ -3550,7 +3555,19 @@ static int msm_dai_q6_dai_mi2s_remove(struct snd_soc_dai *dai)
 {
 	struct msm_dai_q6_mi2s_dai_data *mi2s_dai_data =
 		dev_get_drvdata(dai->dev);
+#if defined (CONFIG_FIH_RCL)
+	struct msm_mi2s_pdata *mi2s_pdata =
+			(struct msm_mi2s_pdata *) dai->dev->platform_data;
+#endif
+
 	int rc;
+
+#if defined (CONFIG_FIH_RCL)
+	if(mi2s_pdata->intf_id ==  MSM_DUMMY_MI2S){
+		kfree(mi2s_dai_data);
+		return 0;
+	}
+#endif
 
 	/* If AFE port is still up, close it */
 	if (test_bit(STATUS_PORT_STARTED,
@@ -4322,6 +4339,25 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 		.probe = msm_dai_q6_dai_mi2s_probe,
 		.remove = msm_dai_q6_dai_mi2s_remove,
 	},
+#if defined (CONFIG_FIH_RCL)
+	{
+		.playback = {
+			.stream_name = "Dummy MI2S Playback",
+			.aif_name = "DUMMY_MI2S_RX",
+			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 |
+				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 |
+				 SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 |
+				 SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_96000 |
+				 SNDRV_PCM_RATE_192000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.rate_min =     8000,
+			.rate_max =     192000,
+		},
+		.id = MSM_DUMMY_MI2S,
+		.probe = msm_dai_q6_dai_mi2s_probe,
+		.remove = msm_dai_q6_dai_mi2s_remove,
+	},
+#endif
 };
 
 

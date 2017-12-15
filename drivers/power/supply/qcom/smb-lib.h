@@ -64,12 +64,9 @@ enum print_reason {
 #define BATT_PROFILE_VOTER		"BATT_PROFILE_VOTER"
 #define OTG_DELAY_VOTER			"OTG_DELAY_VOTER"
 #define USBIN_I_VOTER			"USBIN_I_VOTER"
-#define WEAK_CHARGER_VOTER		"WEAK_CHARGER_VOTER"
 
 #define VCONN_MAX_ATTEMPTS	3
 #define OTG_MAX_ATTEMPTS	3
-#define BOOST_BACK_STORM_COUNT	3
-#define WEAK_CHG_STORM_COUNT	8
 
 enum smb_mode {
 	PARALLEL_MASTER = 0,
@@ -190,6 +187,9 @@ struct smb_params {
 	struct smb_chg_param	dc_icl_div2_mid_hv;
 	struct smb_chg_param	dc_icl_div2_hv;
 	struct smb_chg_param	jeita_cc_comp;
+	/* WayneWCShiue - 9801-468 - [BAT] Jeita temperature protection */
+	struct smb_chg_param	jeita_fv_comp;
+	/* end 9801-468 */
 	struct smb_chg_param	step_soc_threshold[4];
 	struct smb_chg_param	step_soc;
 	struct smb_chg_param	step_cc_delta[5];
@@ -233,7 +233,6 @@ struct smb_charger {
 	struct smb_chg_freq	chg_freq;
 	int			smb_version;
 	int			otg_delay_ms;
-	int			*weak_chg_icl_ua;
 
 	/* locks */
 	struct mutex		lock;
@@ -296,7 +295,9 @@ struct smb_charger {
 	struct delayed_work	pl_enable_work;
 	struct work_struct	legacy_detection_work;
 	struct delayed_work	uusb_otg_work;
-	struct delayed_work	bb_removal_work;
+	/* WayneWCShiue - 9801-3293 - Show battery info */
+	struct delayed_work update_batt_info_work;
+	/* end 9801-3293 */
 
 	/* cached status */
 	int			voltage_min_uv;
@@ -328,7 +329,12 @@ struct smb_charger {
 	int			fake_input_current_limited;
 	bool			pr_swap_in_progress;
 	int			typec_mode;
-	u32			jeita_status;
+	/* WayneWCShiue - 9801-3293 - Show battery info */
+	bool			show_batt_info_en;
+	/* end 9801-3293 */
+	/* WayneWCShiue - 9803-1816 - Set charging current to 0.7C, disable step charging */
+	bool			gStep_charge_en;
+	/* end 9803-1816 */
 
 	/* workaround flag */
 	u32			wa_flags;
@@ -347,6 +353,22 @@ struct smb_charger {
 	/* qnovo */
 	int			usb_icl_delta_ua;
 	int			pulse_cnt;
+
+	/* WayneWCShiue - 9801-3730 - Change JEITA dynamically */
+	bool diff_jeita_fn_en;
+	int	jeita_fcc_comp_cool;
+	int	jeita_fcc_comp_warm;
+	int	jeita_fv_comp_cool;
+	int	jeita_fv_comp_warm;
+	/* end 9801-3730 */
+	int	jeita_fcc_cool_max_ua;
+	int	jeita_fcc_warm_max_ua;
+	int	fcc_max_ua;
+
+	/* WayneWCShiue - 9801-8555 - [BAT] Inform Battery Protect AP once the battery can only charge to 4.1V */
+	int fih_jeita_full_capacity_warm_en;
+	int fih_jeita_full_capacity_cool_en;
+	/* end 9801-8555 */
 };
 
 int smblib_read(struct smb_charger *chg, u16 addr, u8 *val);
@@ -460,6 +482,15 @@ int smblib_get_prop_usb_current_now(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_typec_cc_orientation(struct smb_charger *chg,
 				union power_supply_propval *val);
+
+/* WayneWCShiue - 9801-8555 - [BAT] Inform Battery Protect AP once the battery can only charge to 4.1V */
+int  FIH_jeita_full_capacity_get_status(struct smb_charger *chg);
+void FIH_recharge_after_leaving_JEITA_WARM_COOL(struct smb_charger *chg);
+/* end 9801-8555 */
+/* WayneWCShiue - 9801-3730 - Change JEITA dynamically */
+void FIH_adjust_JEITA(struct smb_charger *chg);
+/* end 9801-3730 */
+
 int smblib_get_prop_typec_power_role(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_pd_allowed(struct smb_charger *chg,
@@ -519,4 +550,12 @@ int smblib_set_prop_pr_swap_in_progress(struct smb_charger *chg,
 
 int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
+
+/* FIH - akckwang - 9801-680 - Dump typec sts register value */
+#if defined(CONFIG_FIH_9801) || defined(CONFIG_FIH_9803)
+int smblib_dump_typec_sts(struct smb_charger *chg,
+			       union power_supply_propval *val);
+#endif
+/* end FIH - 9801-680 */
+
 #endif /* __SMB2_CHARGER_H */

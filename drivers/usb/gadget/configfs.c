@@ -1413,6 +1413,9 @@ static int configfs_composite_bind(struct usb_gadget *gadget,
 err_purge_funcs:
 	purge_configs_funcs(gi);
 err_comp_cleanup:
+	/* FIH - akckwang - 9801-105 - BBS log */
+	printk("BBox::UEC;3::2\n");
+	/* end FIH - 9801-105 */
 	composite_dev_cleanup(cdev);
 	return ret;
 }
@@ -1502,6 +1505,11 @@ static int android_setup(struct usb_gadget *gadget,
 
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (!gi->connected) {
+/* FIH - akckwang - 9801-680 - Dump typec sts register value */
+#if defined(CONFIG_FIH_9801) || defined(CONFIG_FIH_9802)
+		pr_info("%s:gi->connected = 1\n", __func__);
+#endif
+/* end FIH - 9801-680 */
 		gi->connected = 1;
 		schedule_work(&gi->work);
 	}
@@ -1553,6 +1561,11 @@ static void android_disconnect(struct usb_gadget *gadget)
 	acc_disconnect();
 #endif
 	gi->connected = 0;
+/* FIH - akckwang - 9801-680 - Dump typec sts register value */
+#if defined(CONFIG_FIH_9801) || defined(CONFIG_FIH_9802)
+	pr_info("%s:gi->connected = 0\n", __func__);
+#endif
+/* end FIH - 9801-680 */
 	schedule_work(&gi->work);
 	composite_disconnect(gadget);
 }

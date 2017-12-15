@@ -53,6 +53,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/timer.h>
+//#define KPI_ADD
 
 __visible u64 jiffies_64 __cacheline_aligned_in_smp = INITIAL_JIFFIES;
 
@@ -1795,6 +1796,13 @@ void msleep(unsigned int msecs)
 {
 	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
 
+    #ifdef KPI_ADD
+    if(msecs>=5)
+    {
+     printk(KERN_ERR"KPI msleep %um\n",msecs);
+     dump_stack();
+    }
+	#endif
 	while (timeout)
 		timeout = schedule_timeout_uninterruptible(timeout);
 }
@@ -1809,6 +1817,13 @@ unsigned long msleep_interruptible(unsigned int msecs)
 {
 	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
 
+    #ifdef KPI_ADD
+    if(msecs>=1)
+    {
+     printk(KERN_ERR"KPI msleep_interruptible %um\n",msecs);
+     //dump_stack();
+    }
+    #endif
 	while (timeout && !signal_pending(current))
 		timeout = schedule_timeout_interruptible(timeout);
 	return jiffies_to_msecs(timeout);
@@ -1826,6 +1841,14 @@ void __sched usleep_range(unsigned long min, unsigned long max)
 	ktime_t exp = ktime_add_us(ktime_get(), min);
 	u64 delta = (u64)(max - min) * NSEC_PER_USEC;
 
+    #ifdef KPI_ADD
+    if(min>=5000 || max>=5000)
+    {
+     printk(KERN_ERR"KPI usleep_range %lum %lum\n",min/1000,max/1000);
+     if(min>=10000 || max>=10000)
+      dump_stack();
+    }
+	#endif
 	for (;;) {
 		__set_current_state(TASK_UNINTERRUPTIBLE);
 		/* Do not return before the requested sleep time has elapsed */
